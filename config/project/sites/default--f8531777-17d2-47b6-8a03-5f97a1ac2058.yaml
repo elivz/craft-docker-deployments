@@ -1,0 +1,8 @@
+baseUrl: $PRIMARY_SITE_URL
+handle: default
+hasUrls: true
+language: en
+name: 'Craft Docker Deployments Test Site'
+primary: true
+siteGroup: 2ff7fa9c-735e-452e-8af3-7bcfa8e0720d # Craft Docker Deployments Test Site
+sortOrder: 1

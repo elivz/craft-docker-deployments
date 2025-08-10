@@ -21,8 +21,10 @@ return GeneralConfig::create()
     ->preloadSingles()
     // Prevent user enumeration attacks
     ->preventUserEnumeration()
+    // We will run the queue in a separate container
+    ->runQueueAutomatically(false)
     // Set the @webroot alias so the clear-caches command knows where to find CP resources
     ->aliases([
-        '@webroot' => dirname(__DIR__) . '/web',
+        '@webroot' => dirname(__DIR__) . '/public',
     ])
 ;

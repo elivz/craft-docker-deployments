@@ -10,9 +10,9 @@ on:
     branches:
       - main
 
-# These permissions are needed to interact with GitHub's OIDC Token endpoint.
+# These permissions are needed to push to GitHub Container Registry.
 permissions:
-  id-token: write
+  packages: write
   contents: read
 
 jobs:

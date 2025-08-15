@@ -10,7 +10,7 @@ on:
     branches:
       - staging
 
-# These permissions are needed to interact with GitHub Container Registry.
+# These permissions are needed to push to GitHub Container Registry.
 permissions:
   packages: write
   contents: read

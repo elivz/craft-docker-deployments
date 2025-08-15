@@ -1,0 +1,60 @@
+services:
+  web: &web-container
+    image: 958165674010.dkr.ecr.us-east-1.amazonaws.com/web:{BRANCH}
+    restart: unless-stopped
+    links:
+      - "redis"
+    depends_on:
+      - "redis"
+    environment:
+      VIRTUAL_HOST: {VIRTUAL_HOST}
+      VIRTUAL_PORT: 8080
+    volumes:
+      - storage:/var/www/storage
+    env_file:
+      - .env
+    deploy:
+      replicas: ${WEB_REPLICAS:-1}
+      resources:
+        limits:
+          memory: ${WEB_MEMORY_LIMIT:-3G}
+        reservations:
+          memory: ${WEB_MEMORY_RESERVATION:-1G}
+    healthcheck:
+      test: curl -sf http://localhost:8080/actions/app/health-check || exit 1
+      interval: 10s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+  queue: &queue-container
+    <<: *web-container
+    image: 958165674010.dkr.ecr.us-east-1.amazonaws.com/web:{BRANCH}
+    command: nice -n 10 php craft queue/listen --verbose
+    environment:
+      VIRTUAL_HOST: null
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: ${QUEUE_MEMORY_LIMIT:-1G}
+        reservations:
+          memory: ${QUEUE_MEMORY_RESERVATION:-512M}
+    healthcheck:
+      test: php craft queue/info
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "no", "--maxmemory", "${REDIS_MAX_MEMORY:-2gb}", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: redis-cli ping | grep PONG
+      interval: 10s
+      timeout: 10s
+volumes:
+  storage:
+  redis:
+networks:
+  default:
+    external: true
+    name: nginx-proxy

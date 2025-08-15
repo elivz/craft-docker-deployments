@@ -1,0 +1,25 @@
+name: Deploy to Production
+
+concurrency:
+  group: production
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+# These permissions are needed to interact with GitHub's OIDC Token endpoint.
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  call-deployment:
+    uses: ./.github/workflows/deployment.yml
+    with:
+      environment: production
+      domain: www.hamiltoncompany.com
+      basic-auth:
+    secrets: inherit

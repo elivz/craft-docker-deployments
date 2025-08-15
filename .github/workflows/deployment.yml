@@ -1,0 +1,196 @@
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      domain:
+        required: true
+        type: string
+      basic-auth:
+        type: string
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Send started notification to Slack
+        uses: slackapi/slack-github-action@v1.23.0
+        id: slack
+        with:
+          # The following message update step does not accept a channel name.
+          # Setting a channel ID here for consistency is highly recommended.
+          channel-id: ${{ inputs.slack_channel_id }}
+          payload: |
+            {
+              "text": "${{ github.workflow }} started (In Progress)",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "${{ github.workflow }} started ⏳",
+                    "emoji": true
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Workflow*: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\n*Code Changes*: ${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+      - uses: actions/checkout@master
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::958165674010:role/github-actions-deployment
+          aws-region: us-east-1
+      - name: Login to ECR
+        id: ecr-login
+        run: |
+          ecr_pass=$(aws ecr get-login-password --region us-east-1)
+          echo "::add-mask::$ecr_pass"
+          echo "$ecr_pass" | docker login --username AWS --password-stdin 958165674010.dkr.ecr.us-east-1.amazonaws.com
+          echo "ECR_PASS=$ecr_pass" >> "$GITHUB_OUTPUT"
+      - name: Touch .env # Docker will fail if a .env doesn't exist at build even though it is not copied into the container
+        run: touch .env
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build images
+        uses: docker/bake-action@v6
+        with:
+          files: docker-compose.ci.yml
+          pull: true
+          load: true
+          push: true
+          set: |
+            *.cache-from=type=registry,ref=958165674010.dkr.ecr.us-east-1.amazonaws.com/hamilton-web:latest
+            *.cache-from=type=gha,scope=cached-stage
+            *.cache-to=type=gha,scope=cached-stage,mode=max
+        env:
+          BRANCH: ${{ inputs.environment }}
+      - name: Copy Docker configuration
+        uses: easingthemes/ssh-deploy@main
+        env:
+          REMOTE_HOST: ${{ secrets.DEPLOY_HOST }}
+          REMOTE_USER: ${{ secrets.DEPLOY_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_KEY }}
+          ARGS: "-rltgoDzvO"
+          SOURCE: "docker-compose.deployment.yml"
+          TARGET: "${{ inputs.environment }}/docker-compose.yml"
+      - name: Pull images
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          script: |
+            set -e
+            source .bashrc
+            cd ${{ inputs.environment }}
+            echo "${{ steps.ecr-login.outputs.ECR_PASS }}" | docker login --username AWS --password-stdin 958165674010.dkr.ecr.us-east-1.amazonaws.com
+            sed -i -e "s/{BRANCH}/${{ inputs.environment }}/g" docker-compose.yml
+            sed -i -e "s/{VIRTUAL_HOST}/${{ inputs.domain }}/g" docker-compose.yml
+            docker compose pull -q
+      - name: Restart containers
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          script: |
+            set -e
+            source .bashrc
+            cd ${{ inputs.environment }}
+            docker compose up --detach --no-build --wait --remove-orphans
+      - name: Run Craft database migrations and clear caches
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          command_timeout: 30m
+          script: |
+            set -e
+            source .bashrc
+            cd ${{ inputs.environment }}
+            docker compose exec web php craft up --interactive=0
+            docker compose exec web php craft clear-caches/compiled-classes --interactive=0
+            docker compose exec web php craft clear-caches/compiled-templates --interactive=0
+            docker compose exec web php craft invalidate-tags/all --interactive=0
+      - name: Health Check
+        uses: jtalk/url-health-check-action@v4
+        with:
+          url: https://${{ inputs.domain }}/actions/app/health-check
+          max-attempts: 4
+          retry-delay: 5s
+          basic-auth: ${{ inputs.basic-auth }}
+      - name: Send failure notification to Slack
+        uses: slackapi/slack-github-action@v1.23.0
+        if: failure()
+        with:
+          channel-id: "C049XB4PYFJ"
+          update-ts: ${{ steps.slack.outputs.ts }}
+          payload: |
+            {
+              "text": "${{ github.workflow }} finished (Failed)",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "${{ github.workflow }} failed 🚨",
+                    "emoji": true
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Workflow*: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\n*Code Changes*: ${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+      - name: Send success notification to Slack
+        uses: slackapi/slack-github-action@v1.23.0
+        if: success()
+        with:
+          channel-id: "C049XB4PYFJ"
+          update-ts: ${{ steps.slack.outputs.ts }}
+          payload: |
+            {
+              "text": "${{ github.workflow }} finished (Completed)",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "${{ github.workflow }} finished ✅",
+                    "emoji": true
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Workflow*: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\n*Code Changes*: ${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

@@ -1,0 +1,25 @@
+name: Deploy to Staging
+
+concurrency:
+  group: staging
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - staging
+
+# These permissions are needed to interact with GitHub's OIDC Token endpoint.
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  call-deployment:
+    uses: ./.github/workflows/deployment.yml
+    with:
+      environment: staging
+      domain: staging.hamiltoncompany.com
+      basic-auth: "hamilton:hamiltonprivate"
+    secrets: inherit

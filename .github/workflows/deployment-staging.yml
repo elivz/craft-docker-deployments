@@ -20,7 +20,7 @@ jobs:
     uses: ./.github/workflows/deployment.yml
     with:
       environment: staging
-      domain: staging.hamiltoncompany.com
-      basic-auth: "hamilton:hamiltonprivate"
-      slack_channel_id: 'C049XB4PYFJ' # Or from a secret: ${{ secrets.SLACK_CHANNEL_ID_PROD }}
+      domain: staging.craft-deployment-test.com
+      basic-auth: "craft:private"
+      slack_channel_id: '' # Or from a secret: ${{ secrets.SLACK_CHANNEL_ID_PROD }}
     secrets: inherit

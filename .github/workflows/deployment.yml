@@ -16,15 +16,20 @@ on:
         type: string
 
 jobs:
-  deploy:
+  # Job 1: Notify start and build/push Docker images
+  build:
+    name: Build and Push Images
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     env:
       GHCR_REGISTRY: ghcr.io
       GHCR_REPOSITORY: ${{ github.repository }}/web
+    outputs:
+      slack-ts: ${{ steps.slack.outputs.ts }}
     steps:
       - name: Send started notification to Slack
         uses: slackapi/slack-github-action@v1.26.0
+        if: ${{ inputs.slack_channel_id != '' }}
         id: slack
         with:
           channel-id: ${{ inputs.slack_channel_id }}
@@ -74,9 +79,21 @@ jobs:
             *.cache-to=type=gha,scope=cached-stage,mode=max
         env:
           BRANCH: ${{ inputs.environment }}
+
+  # Job 2: Deploy containers to server
+  deploy:
+    name: Deploy to Server
+    runs-on: ubuntu-latest
+    needs: build
+    environment: ${{ inputs.environment }}
+    env:
+      GHCR_REGISTRY: ghcr.io
+      GHCR_REPOSITORY: ${{ github.repository }}/web
+    steps:
+      - uses: actions/checkout@v4
       - name: Copy Docker configuration
         uses: easingthemes/ssh-deploy@main
-        env:
+        with:
           REMOTE_HOST: ${{ secrets.DEPLOY_HOST }}
           REMOTE_USER: ${{ secrets.DEPLOY_USER }}
           SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_KEY }}
@@ -103,6 +120,14 @@ jobs:
             # Pull down new images
             docker compose pull -q
             docker compose up --detach --no-build --wait --remove-orphans
+
+  # Job 3: Run database migrations and clear caches
+  migrate:
+    name: Run Migrations
+    runs-on: ubuntu-latest
+    needs: deploy
+    environment: ${{ inputs.environment }}
+    steps:
       - name: Run Craft database migrations and clear caches
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -118,7 +143,16 @@ jobs:
             docker compose exec web php craft clear-caches/compiled-classes --interactive=0
             docker compose exec web php craft clear-caches/compiled-templates --interactive=0
             docker compose exec web php craft invalidate-tags/all --interactive=0
+
+  # Job 4: Health check and rollback on failure
+  verify:
+    name: Health Check
+    runs-on: ubuntu-latest
+    needs: migrate
+    environment: ${{ inputs.environment }}
+    steps:
       - name: Health Check
+        id: health-check
         uses: jtalk/url-health-check-action@v4
         with:
           url: https://${{ inputs.domain }}/actions/app/health-check
@@ -140,12 +174,20 @@ jobs:
             docker compose down
             docker image prune -f
             docker compose up --detach --wait
+
+  # Job 5: Send notifications based on overall workflow status
+  notify:
+    name: Send Notifications
+    runs-on: ubuntu-latest
+    needs: [build, deploy, migrate, verify]
+    if: always() && inputs.slack_channel_id != ''
+    steps:
       - name: Send failure notification to Slack
         uses: slackapi/slack-github-action@v1.26.0
-        if: failure()
+        if: contains(needs.*.result, 'failure')
         with:
           channel-id: ${{ inputs.slack_channel_id }}
-          update-ts: ${{ steps.slack.outputs.ts }}
+          update-ts: ${{ needs.build.outputs.slack-ts }}
           payload: |
             {
               "text": "${{ github.workflow }} finished (Failed)",
@@ -172,10 +214,10 @@ jobs:
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
       - name: Send success notification to Slack
         uses: slackapi/slack-github-action@v1.26.0
-        if: success()
+        if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
         with:
           channel-id: ${{ inputs.slack_channel_id }}
-          update-ts: ${{ steps.slack.outputs.ts }}
+          update-ts: ${{ needs.build.outputs.slack-ts }}
           payload: |
             {
               "text": "${{ github.workflow }} finished (Completed)",

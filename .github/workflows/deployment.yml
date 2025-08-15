@@ -83,7 +83,7 @@ jobs:
           ARGS: "-rltgoDzvO"
           SOURCE: "docker-compose.deployment.yml"
           TARGET: "${{ inputs.environment }}/docker-compose.yml"
-      - name: Pull images
+      - name: Pull images and restart containers
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -103,8 +103,6 @@ jobs:
             # Pull down new images
             docker compose pull -q
             docker compose up --detach --no-build --wait --remove-orphans
-        env:
-          DOCKER_COMPOSE_CONTENT: ${{ toJSON(fromJSON(file('docker-compose.deployment.yml'))) }}
       - name: Run Craft database migrations and clear caches
         uses: appleboy/ssh-action@v1.0.3
         with:

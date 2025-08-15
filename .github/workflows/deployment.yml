@@ -11,6 +11,8 @@ on:
         type: string
       basic-auth:
         type: string
+      slack_webhook_url:
+        type: string
       slack_channel_id:
         type: string
 
@@ -28,10 +30,10 @@ jobs:
     steps:
       - name: Send started notification to Slack
         uses: slackapi/slack-github-action@v1.26.0
-        if: ${{ secrets.SLACK_WEBHOOK_URL && inputs.slack_channel_id }}
+        if: ${{ inputs.slack_webhook_url && inputs.slack_channel_id }}
         id: slack
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ inputs.slack_webhook_url }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
         with:
           channel-id: ${{ inputs.slack_channel_id }}
@@ -179,13 +181,13 @@ jobs:
     name: Send Notifications
     runs-on: ubuntu-latest
     needs: [build, deploy, migrate, verify]
-    if: ${{ always() && secrets.SLACK_WEBHOOK_URL && inputs.slack_channel_id }}
+    if: ${{ always() && inputs.slack_webhook_url && inputs.slack_channel_id }}
     steps:
       - name: Send failure notification to Slack
         uses: slackapi/slack-github-action@v1.26.0
         if: contains(needs.*.result, 'failure')
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ inputs.slack_webhook_url }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
         with:
           channel-id: ${{ inputs.slack_channel_id }}
@@ -239,5 +241,5 @@ jobs:
               ]
             }
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ inputs.slack_webhook_url }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

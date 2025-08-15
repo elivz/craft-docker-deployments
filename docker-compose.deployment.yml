@@ -1,6 +1,6 @@
 services:
   web: &web-container
-    image: 958165674010.dkr.ecr.us-east-1.amazonaws.com/web:{BRANCH}
+    image: ${GHCR_REGISTRY:-ghcr.io}/${GHCR_REPOSITORY:-web}:{BRANCH}
     restart: unless-stopped
     links:
       - "redis"
@@ -28,7 +28,7 @@ services:
       retries: 3
   queue: &queue-container
     <<: *web-container
-    image: 958165674010.dkr.ecr.us-east-1.amazonaws.com/web:{BRANCH}
+    image: ${GHCR_REGISTRY:-ghcr.io}/${GHCR_REPOSITORY:-web}:{BRANCH}
     command: nice -n 10 php craft queue/listen --verbose
     environment:
       VIRTUAL_HOST: null

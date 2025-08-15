@@ -10,9 +10,9 @@ on:
     branches:
       - main
 
-# These permissions are needed to interact with GitHub's OIDC Token endpoint.
+# These permissions are needed to interact with GitHub Container Registry.
 permissions:
-  id-token: write
+  packages: write
   contents: read
 
 jobs:
@@ -22,4 +22,5 @@ jobs:
       environment: production
       domain: www.hamiltoncompany.com
       basic-auth:
+      slack_channel_id: 'C049XB4PYFJ' # Or from a secret: ${{ secrets.SLACK_CHANNEL_ID_PROD }}
     secrets: inherit

@@ -26,7 +26,7 @@ ENV PHP_OPCACHE_JIT_BUFFER_SIZE=100M
 # Install necessary server packages and PHP extensions
 USER root
 RUN docker-php-serversideup-dep-install-debian "nano default-mysql-client"
-RUN install-php-extensions gd bcmath intl imagick
+RUN install-php-extensions bcmath imagick intl
 USER www-data
 
 # Custom PHP configuration file

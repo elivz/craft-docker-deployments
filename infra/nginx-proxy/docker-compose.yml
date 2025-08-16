@@ -1,0 +1,20 @@
+services:
+  nginx-proxy:
+    image: nginxproxy/nginx-proxy:1.8-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    init: true
+    restart: always
+    environment:
+      ENABLE_IPV6: true
+    volumes:
+      - $XDG_RUNTIME_DIR/docker.sock:/tmp/docker.sock:ro
+      - ./includes/proxy.conf:/etc/nginx/conf.d/proxy.conf:ro
+      - ./includes/certs:/etc/nginx/certs
+      - ./includes/htpasswd:/etc/nginx/htpasswd
+
+networks:
+  default:
+    external: true
+    name: nginx-proxy

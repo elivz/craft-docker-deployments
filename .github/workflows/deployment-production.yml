@@ -20,7 +20,7 @@ jobs:
     uses: ./.github/workflows/deployment.yml
     with:
       environment: production
-      domain: www.craft-deployment-test.com
+      domain: craft-docker-deployment.elivz.com
       basic-auth:
       slack_webhook_url: '' # Or from a secret: ${{ secrets.SLACK_CHANNEL_ID }}
       slack_channel_id: '' # Or from a secret: ${{ secrets.SLACK_WEBHOOK_URL }}

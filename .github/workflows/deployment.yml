@@ -81,9 +81,9 @@ jobs:
         env:
           BRANCH: ${{ inputs.environment }}
 
-  # Job 2: Deploy containers to server
-  deploy:
-    name: Deploy to Server
+  # Job 2: Deploy containers to server and verify health
+  deploy-and-verify:
+    name: Deploy and Verify
     runs-on: ubuntu-latest
     needs: build
     environment: ${{ inputs.environment }}
@@ -121,37 +121,6 @@ jobs:
             # Pull down new images
             docker compose pull -q
             docker compose up --detach --no-build --wait --remove-orphans
-
-  # Job 3: Run database migrations and clear caches
-  migrate:
-    name: Run Migrations
-    runs-on: ubuntu-latest
-    needs: deploy
-    environment: ${{ inputs.environment }}
-    steps:
-      - name: Run Craft database migrations and clear caches
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_KEY }}
-          command_timeout: 30m
-          script: |
-            set -e
-            source ~/.bashrc
-            cd ${{ inputs.environment }}
-            docker compose exec web php craft up --interactive=0
-            docker compose exec web php craft clear-caches/compiled-classes --interactive=0
-            docker compose exec web php craft clear-caches/compiled-templates --interactive=0
-            docker compose exec web php craft invalidate-tags/all --interactive=0
-
-  # Job 4: Health check and rollback on failure
-  verify:
-    name: Health Check
-    runs-on: ubuntu-latest
-    needs: migrate
-    environment: ${{ inputs.environment }}
-    steps:
       - name: Health Check
         id: health-check
         uses: jtalk/url-health-check-action@v4
@@ -176,11 +145,35 @@ jobs:
             docker image prune -f
             docker compose up --detach --wait
 
-  # Job 5: Send notifications based on overall workflow status
+  # Job 3: Run database migrations and clear caches
+  migrate:
+    name: Run Migrations
+    runs-on: ubuntu-latest
+    needs: deploy-and-verify
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Run Craft database migrations and clear caches
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          command_timeout: 30m
+          script: |
+            set -e
+            source ~/.bashrc
+            cd ${{ inputs.environment }}
+            docker compose exec web php craft up --interactive=0
+            docker compose exec web php craft clear-caches/compiled-classes --interactive=0
+            docker compose exec web php craft clear-caches/compiled-templates --interactive=0
+            docker compose exec web php craft invalidate-tags/all --interactive=0
+
+
+  # Job 4: Send notifications based on overall workflow status
   notify:
     name: Send Notifications
     runs-on: ubuntu-latest
-    needs: [build, deploy, migrate, verify]
+    needs: [build, deploy-and-verify, migrate]
     if: ${{ always() && inputs.slack_webhook_url && inputs.slack_channel_id }}
     steps:
       - name: Send failure notification to Slack

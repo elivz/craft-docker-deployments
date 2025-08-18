@@ -104,7 +104,7 @@ This repository demonstrates a modern deployment workflow for Craft CMS applicat
    Copy the nginx-proxy configuration files to your server:
    ```bash
    # On your local machine, copy nginx-proxy files to server
-   scp -r infra/nginx-proxy/* deploy@your-server.com:~/
+   scp -r infra/nginx-proxy deploy@your-server.com:~/
    ```
    
    **Optional: Add SSL certificates**
@@ -112,8 +112,8 @@ This repository demonstrates a modern deployment workflow for Craft CMS applicat
    ```bash
    # Copy your certificate files to includes/certs/
    # Example for domain: your-domain.com
-   cp your-domain.com.crt includes/certs/
-   cp your-domain.com.key includes/certs/
+   cp your-domain.com.crt nginx-proxy/includes/certs/
+   cp your-domain.com.key nginx-proxy/includes/certs/
    ```
    
    **Optional: Add basic authentication**
@@ -123,13 +123,13 @@ This repository demonstrates a modern deployment workflow for Craft CMS applicat
    sudo apt-get update && sudo apt-get install apache2-utils
    
    # Create htpasswd file for a domain
-   htpasswd -c includes/htpasswd/staging.your-domain.com username
+   htpasswd -c nginx-proxy/includes/htpasswd/staging.your-domain.com username
    ```
    
    Start the nginx-proxy container:
    ```bash
    # Make sure you're in the home directory
-   cd ~
+   cd ~/nginx-proxy
    
    # Start nginx-proxy using docker-compose
    docker compose up -d
@@ -191,54 +191,68 @@ Create `.env` file on your server in the deployment directories:
 
 **For staging** (`~/staging/.env`):
 ```env
-CRAFT_APP_ID=your-app-id
-CRAFT_ENVIRONMENT=staging
-CRAFT_SECURITY_KEY=your-production-security-key
-CRAFT_DEV_MODE=false
-CRAFT_ALLOW_ADMIN_CHANGES=false
-CRAFT_DISALLOW_ROBOTS=true
+# Read about configuration, here:
+# https://craftcms.com/docs/5.x/configure.html
 
-# Database Configuration
+# Set the hostname for the Craft CMS application.
+# This is used by nginx-proxy to route requests to the correct container.
+VIRTUAL_HOST=staging.craft-docker-deployment.elivz.com
+
+# The application ID used to to uniquely store session and cache data, mutex locks, and more
+CRAFT_APP_ID=your-app-id
+
+# The environment Craft is currently running in (dev, staging, production, etc.)
+CRAFT_ENVIRONMENT=staging
+
+# Database connection settings
 CRAFT_DB_DRIVER=mysql
 CRAFT_DB_SERVER=your-db-server
 CRAFT_DB_PORT=3306
 CRAFT_DB_DATABASE=staging_database
 CRAFT_DB_USER=staging_user
 CRAFT_DB_PASSWORD=secure-password
+CRAFT_DB_SCHEMA=public
+CRAFT_DB_TABLE_PREFIX=
 
-# Site Configuration
-PRIMARY_SITE_URL=https://staging.craft-deployment-test.com/
-
-# Optional: Redis Configuration
-REDIS_HOSTNAME=redis
-REDIS_PORT=6379
-REDIS_PASSWORD=your-redis-password
+# General settings
+CRAFT_SECURITY_KEY=your-security-key
+CRAFT_DEV_MODE=false
+CRAFT_ALLOW_ADMIN_CHANGES=false
+CRAFT_DISALLOW_ROBOTS=true
+CRAFT_STREAM_LOGS=true
 ```
 
 **For production** (`~/production/.env`):
 ```env
-CRAFT_APP_ID=your-app-id
-CRAFT_ENVIRONMENT=production
-CRAFT_SECURITY_KEY=your-production-security-key
-CRAFT_DEV_MODE=false
-CRAFT_ALLOW_ADMIN_CHANGES=false
-CRAFT_DISALLOW_ROBOTS=false
+# Read about configuration, here:
+# https://craftcms.com/docs/5.x/configure.html
 
-# Database Configuration
+# Set the hostname for the Craft CMS application.
+# This is used by nginx-proxy to route requests to the correct container.
+VIRTUAL_HOST=craft-docker-deployment.elivz.com
+
+# The application ID used to to uniquely store session and cache data, mutex locks, and more
+CRAFT_APP_ID=your-app-id
+
+# The environment Craft is currently running in (dev, staging, production, etc.)
+CRAFT_ENVIRONMENT=production
+
+# Database connection settings
 CRAFT_DB_DRIVER=mysql
 CRAFT_DB_SERVER=your-db-server
 CRAFT_DB_PORT=3306
 CRAFT_DB_DATABASE=production_database
 CRAFT_DB_USER=production_user
 CRAFT_DB_PASSWORD=secure-password
+CRAFT_DB_SCHEMA=public
+CRAFT_DB_TABLE_PREFIX=
 
-# Site Configuration
-PRIMARY_SITE_URL=https://www.craft-deployment-test.com/
-
-# Optional: Redis Configuration
-REDIS_HOSTNAME=redis
-REDIS_PORT=6379
-REDIS_PASSWORD=your-redis-password
+# General settings
+CRAFT_SECURITY_KEY=your-security-key
+CRAFT_DEV_MODE=false
+CRAFT_ALLOW_ADMIN_CHANGES=false
+CRAFT_DISALLOW_ROBOTS=false
+CRAFT_STREAM_LOGS=true
 ```
 
 #### 2. Environment-specific Scaling (Optional)

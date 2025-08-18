@@ -9,7 +9,9 @@ services:
     environment:
       ENABLE_IPV6: true
     volumes:
-      - $XDG_RUNTIME_DIR/docker.sock:/tmp/docker.sock:ro
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+      # In some environments, XDG_RUNTIME_DIR is needed instead of /var/run
+      # - $XDG_RUNTIME_DIR/docker.sock:/tmp/docker.sock:ro
       - ./includes/proxy.conf:/etc/nginx/conf.d/proxy.conf:ro
       - ./includes/certs:/etc/nginx/certs
       - ./includes/htpasswd:/etc/nginx/htpasswd

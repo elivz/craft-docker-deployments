@@ -22,6 +22,4 @@ jobs:
       environment: staging
       domain: craft-docker-deployment-staging.elivz.com
       basic-auth: "craft:private"
-      slack_webhook_url: '' # Or from a secret: ${{ secrets.SLACK_CHANNEL_ID }}
-      slack_channel_id: '' # Or from a secret: ${{ secrets.SLACK_WEBHOOK_URL }}
     secrets: inherit

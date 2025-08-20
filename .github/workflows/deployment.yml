@@ -11,10 +11,6 @@ on:
         type: string
       basic-auth:
         type: string
-      slack_webhook_url:
-        type: string
-      slack_channel_id:
-        type: string
 
 jobs:
   # Job 1: Notify start and build/push Docker images
@@ -25,18 +21,20 @@ jobs:
     env:
       GHCR_REGISTRY: ghcr.io
       GHCR_REPOSITORY: ${{ github.repository }}/web
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
     outputs:
       slack-ts: ${{ steps.slack.outputs.ts }}
     steps:
       - name: Send started notification to Slack
         uses: slackapi/slack-github-action@v1.26.0
-        if: ${{ inputs.slack_webhook_url && inputs.slack_channel_id }}
+        if: ${{ env.SLACK_WEBHOOK_URL != '' && env.SLACK_CHANNEL_ID != '' }}
         id: slack
         env:
-          SLACK_WEBHOOK_URL: ${{ inputs.slack_webhook_url }}
+          SLACK_WEBHOOK_URL: ${{ env.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
         with:
-          channel-id: ${{ inputs.slack_channel_id }}
+          channel-id: ${{ env.SLACK_CHANNEL_ID }}
           payload: |
             {
               "text": "${{ github.workflow }} started (In Progress)",
@@ -173,17 +171,20 @@ jobs:
   notify:
     name: Send Notifications
     runs-on: ubuntu-latest
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
     needs: [build, deploy-and-verify, migrate]
-    if: ${{ always() && inputs.slack_webhook_url && inputs.slack_channel_id }}
+    if: always()
     steps:
       - name: Send failure notification to Slack
         uses: slackapi/slack-github-action@v1.26.0
-        if: contains(needs.*.result, 'failure')
+        if: ${{ contains(needs.*.result, 'failure') && env.SLACK_WEBHOOK_URL != '' && env.SLACK_CHANNEL_ID != '' }}
         env:
-          SLACK_WEBHOOK_URL: ${{ inputs.slack_webhook_url }}
+          SLACK_WEBHOOK_URL: ${{ env.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
         with:
-          channel-id: ${{ inputs.slack_channel_id }}
+          channel-id: ${{ env.SLACK_CHANNEL_ID }}
           update-ts: ${{ needs.build.outputs.slack-ts }}
           payload: |
             {
@@ -208,9 +209,9 @@ jobs:
             }
       - name: Send success notification to Slack
         uses: slackapi/slack-github-action@v1.26.0
-        if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+        if: ${{ !contains(needs.*.result, 'failure') && env.SLACK_WEBHOOK_URL != '' && env.SLACK_CHANNEL_ID != '' }}
         with:
-          channel-id: ${{ inputs.slack_channel_id }}
+          channel-id: ${{ env.SLACK_CHANNEL_ID }}
           update-ts: ${{ needs.build.outputs.slack-ts }}
           payload: |
             {
@@ -234,5 +235,5 @@ jobs:
               ]
             }
         env:
-          SLACK_WEBHOOK_URL: ${{ inputs.slack_webhook_url }}
+          SLACK_WEBHOOK_URL: ${{ env.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

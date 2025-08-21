@@ -116,6 +116,16 @@ jobs:
             # Set GHCR environment variables for docker-compose
             export GHCR_REGISTRY="${{ env.GHCR_REGISTRY }}"
             export GHCR_REPOSITORY="${{ env.GHCR_REPOSITORY }}"
+            
+            # Tag current images as 'previous' for rollback purposes (if they exist)
+            if docker compose images -q web >/dev/null 2>&1; then
+              CURRENT_WEB_IMAGE=$(docker compose images -q web | head -n1)
+              if [ ! -z "$CURRENT_WEB_IMAGE" ]; then
+                docker tag $CURRENT_WEB_IMAGE ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_REPOSITORY }}:${{ inputs.environment }}-previous
+                echo "Tagged current web image as previous: ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_REPOSITORY }}:${{ inputs.environment }}-previous"
+              fi
+            fi
+            
             # Pull down new images
             docker compose pull -q
             docker compose up --detach --no-build --wait --remove-orphans
@@ -139,9 +149,26 @@ jobs:
             source ~/.bashrc
             cd ${{ inputs.environment }}
             echo "Health check failed, rolling back to previous image..."
+            
+            # Set GHCR environment variables for docker-compose
+            export GHCR_REGISTRY="${{ env.GHCR_REGISTRY }}"
+            export GHCR_REPOSITORY="${{ env.GHCR_REPOSITORY }}"
+            
+            # Stop current containers
             docker compose down
-            docker image prune -f
-            docker compose up --detach --wait
+            
+            # Check if previous image exists and rollback
+            if [ "$(docker images -q ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_REPOSITORY }}:${{ inputs.environment }}-previous 2> /dev/null)" ]; then
+              echo "Rolling back to previous image..."
+              # Tag the previous image as current
+              docker tag ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_REPOSITORY }}:${{ inputs.environment }}-previous ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_REPOSITORY }}:${{ inputs.environment }}
+              # Start containers with previous image
+              docker compose up --detach --wait
+              echo "Rollback completed successfully"
+            else
+              echo "No previous image found for rollback. Manual intervention required."
+              exit 1
+            fi
 
   # Job 3: Run database migrations and clear caches
   migrate:

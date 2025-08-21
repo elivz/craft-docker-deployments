@@ -162,11 +162,75 @@ Configure the following secrets for each environment:
 | `DEPLOY_USER` | SSH username for deployment | `deploy` |
 | `DEPLOY_KEY` | Private SSH key for deployment user | `-----BEGIN OPENSSH PRIVATE KEY-----` |
 
-**Optional Slack Integration:**
-| Secret Name | Description |
-|------------|-------------|
-| `SLACK_WEBHOOK_URL` | Slack webhook URL for notifications |
-| `SLACK_CHANNEL_ID` | Slack channel ID for notifications |
+**Slack Integration for Deployment Notifications:**
+
+The deployment workflow includes built-in Slack notifications that will send messages when deployments start, succeed, or fail. Setting up Slack integration is optional but highly recommended for team collaboration.
+
+| Secret Name | Description | Required |
+|------------|-------------|----------|
+| `SLACK_WEBHOOK_URL` | Slack webhook URL for notifications | Yes |
+| `SLACK_CHANNEL_ID` | Slack channel ID for notifications | Yes |
+
+#### Setting Up Slack Integration
+
+**Step 1: Create a Slack App**
+
+1. Go to [Slack API Apps page](https://api.slack.com/apps) and click **"Create New App"**
+2. Choose **"From scratch"**
+3. Enter an app name (e.g., "GitHub Deployments") and select your workspace
+4. Click **"Create App"**
+
+**Step 2: Enable Incoming Webhooks**
+
+1. In your app's settings, navigate to **"Incoming Webhooks"** in the left sidebar
+2. Toggle **"Activate Incoming Webhooks"** to **On**
+3. Click **"Add New Webhook to Workspace"**
+4. Select the channel where you want deployment notifications to appear
+5. Click **"Allow"**
+6. Copy the webhook URL (starts with `https://hooks.slack.com/services/...`)
+
+**Step 3: Get Channel ID**
+
+1. Open Slack in your browser or desktop app
+2. Navigate to the desired channel
+3. Look at the URL - the channel ID is the part after `/channels/` (e.g., `C1234567890`)
+
+**Step 4: Add Secrets to GitHub**
+
+For each environment (staging and production):
+
+1. Go to your GitHub repository → **Settings** → **Environments**
+2. Select the environment (staging/production)
+3. Add the following secrets:
+   - `SLACK_WEBHOOK_URL`: The webhook URL from Step 2
+   - `SLACK_CHANNEL_ID`: The channel ID from Step 3
+
+#### Troubleshooting Slack Integration
+
+**Notifications not appearing:**
+- Verify both `SLACK_WEBHOOK_URL` and `SLACK_CHANNEL_ID` secrets are set correctly
+- Ensure the Slack app has permission to post to the specified channel
+- Check that the webhook URL is valid and hasn't expired
+
+**Wrong channel receiving notifications:**
+- Double-check the `SLACK_CHANNEL_ID` matches your intended channel
+- Verify the channel ID format (should start with 'C' followed by alphanumeric characters)
+
+**Webhook URL issues:**
+- Webhook URLs can expire or be revoked - regenerate if needed
+- Ensure the URL starts with `https://hooks.slack.com/services/`
+- Make sure there are no extra spaces or characters in the secret value
+
+**App permissions:**
+- If using channel IDs, ensure your Slack app has `channels:read` scope
+- For private channels, the app needs to be invited to the channel
+
+#### Best Practices
+
+- **Channel Naming**: Consider channels like `#project-notify` or `#project-deployments`
+- **Team Access**: Ensure relevant team members have access to notification channels
+- **Testing**: Test notifications with a staging deployment first
+- **Monitoring**: Regularly check that notifications are working as expected
 
 #### 3. Setting up SSH Keys
 

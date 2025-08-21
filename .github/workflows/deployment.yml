@@ -15,10 +15,6 @@ on:
         type: string
         default: '/actions/app/health-check'
         description: 'Health check endpoint path'
-      deployment-timeout:
-        type: number
-        default: 300
-        description: 'Deployment timeout in seconds'
 
 env:
   GHCR_REGISTRY: ghcr.io
@@ -100,7 +96,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     environment: ${{ inputs.environment }}
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -130,7 +126,7 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
-          command_timeout: ${{ inputs.deployment-timeout }}s
+          command_timeout: 5m
           script: |
             set -e
             source ~/.bashrc
@@ -208,9 +204,9 @@ jobs:
               
               # Start containers with previous image
               docker compose up --detach --wait --timeout 60
-              
+
               echo "✅ Rollback completed successfully"
-              
+
               # Verify rollback health
               sleep 5
               if docker compose ps --services --filter "status=running" | grep -q web; then

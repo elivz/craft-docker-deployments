@@ -72,7 +72,6 @@ Ensure your deployment server has:
 | `domain` | ✅ | - | Domain name for the deployment |
 | `basic-auth` | ❌ | - | Basic authentication credentials |
 | `health-check-path` | ❌ | `/actions/app/health-check` | Health check endpoint path |
-| `deployment-timeout` | ❌ | `300` | Deployment timeout in seconds |
 
 ### Example with Custom Configuration
 
@@ -84,7 +83,6 @@ jobs:
       environment: production
       domain: yoursite.com
       health-check-path: /health
-      deployment-timeout: 600
     secrets: inherit
 ```
 

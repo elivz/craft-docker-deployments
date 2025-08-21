@@ -32,7 +32,7 @@ services:
     environment:
       VIRTUAL_HOST: null
     deploy:
-      replicas: 1
+      replicas: ${QUEUE_REPLICAS:-1}
       resources:
         limits:
           memory: ${QUEUE_MEMORY_LIMIT:-1G}

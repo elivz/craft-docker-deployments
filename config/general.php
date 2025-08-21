@@ -26,3 +26,4 @@ return GeneralConfig::create()
     ->aliases([
         '@webroot' => dirname(__DIR__) . '/public',
     ]);
+test

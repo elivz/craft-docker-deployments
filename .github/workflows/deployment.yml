@@ -100,7 +100,9 @@ jobs:
           SOURCE: "docker-compose.deployment.yml"
           TARGET: "${{ inputs.environment }}/docker-compose.yml"
       - name: Pull images and restart containers
+        id: deploy
         uses: appleboy/ssh-action@v1.0.3
+        continue-on-error: true
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
@@ -131,6 +133,7 @@ jobs:
             docker compose up --detach --no-build --wait --remove-orphans
       - name: Health Check
         id: health-check
+        if: steps.deploy.outcome == 'success'
         uses: jtalk/url-health-check-action@v4
         with:
           url: https://${{ inputs.domain }}/actions/app/health-check
@@ -138,7 +141,7 @@ jobs:
           retry-delay: 5s
           basic-auth: ${{ inputs.basic-auth }}
       - name: Rollback on failure
-        if: failure()
+        if: steps.deploy.outcome == 'failure' || steps.health-check.outcome == 'failure'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -148,14 +151,14 @@ jobs:
             set -e
             source ~/.bashrc
             cd ${{ inputs.environment }}
-            echo "Health check failed, rolling back to previous image..."
+            echo "Deployment or health check failed, rolling back to previous image..."
             
             # Set GHCR environment variables for docker-compose
             export GHCR_REGISTRY="${{ env.GHCR_REGISTRY }}"
             export GHCR_REPOSITORY="${{ env.GHCR_REPOSITORY }}"
             
-            # Stop current containers
-            docker compose down
+            # Stop current containers (if running)
+            docker compose down || true
             
             # Check if previous image exists and rollback
             if [ "$(docker images -q ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_REPOSITORY }}:${{ inputs.environment }}-previous 2> /dev/null)" ]; then
@@ -169,6 +172,9 @@ jobs:
               echo "No previous image found for rollback. Manual intervention required."
               exit 1
             fi
+      - name: Mark deployment as failed
+        if: steps.deploy.outcome == 'failure' || steps.health-check.outcome == 'failure'
+        run: exit 1
 
   # Job 3: Run database migrations and clear caches
   migrate:

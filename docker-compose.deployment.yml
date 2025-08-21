@@ -1,6 +1,6 @@
 services:
   web: &web-container
-    image: ${GHCR_REGISTRY:-ghcr.io}/${GHCR_REPOSITORY:-web}:{BRANCH}
+    image: {GHCR_REGISTRY}/{GHCR_REPOSITORY}:{BRANCH}
     restart: unless-stopped
     links:
       - "redis"
@@ -28,7 +28,7 @@ services:
       retries: 3
   queue: &queue-container
     <<: *web-container
-    image: ${GHCR_REGISTRY:-ghcr.io}/${GHCR_REPOSITORY:-web}:{BRANCH}
+    image: {GHCR_REGISTRY}/{GHCR_REPOSITORY}:{BRANCH}
     command: nice -n 10 php craft queue/listen --verbose
     environment:
       VIRTUAL_HOST: null

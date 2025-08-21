@@ -1,495 +1,281 @@
-# Craft CMS Docker Deployments
+# Craft Docker Deployments
 
-A Docker-based deployment system for Craft CMS with automated CI/CD pipelines using GitHub Actions. This project provides a complete infrastructure setup for deploying Craft CMS applications to staging and production environments.
+A robust GitHub Actions workflow for deploying Craft CMS applications using Docker containers with automatic rollback capabilities.
 
-## Overview
+## Features
 
-This repository demonstrates a modern deployment workflow for Craft CMS applications using:
+- 🚀 **Automated Docker builds** using GitHub Container Registry
+- 🔄 **Intelligent rollback** on deployment or health check failures
+- 🏥 **Health checking** with configurable endpoints and timeouts
+- 📢 **Slack notifications** for deployment status updates
+- 🔒 **Secure deployments** with SSH-based container management
+- ⚡ **Fast builds** with Docker layer caching
+- 🔧 **Database migrations** and cache clearing automation
 
-- **Docker** for containerization and consistent environments
-- **GitHub Actions** for CI/CD automation
-- **GitHub Container Registry (GHCR)** for Docker image storage
-- **nginx-proxy** for reverse proxy and SSL termination
-- **Multi-stage deployment** with health checks and rollback capabilities
-- **Slack notifications** for deployment status updates
+## Quick Start
 
-## Architecture
+### 1. Repository Setup
 
-### Services
+Add the deployment workflow to your repository by creating `.github/workflows/deploy-staging.yml`:
 
-- **Web Container**: PHP 8.4 with nginx, serves the Craft CMS application
-- **Queue Container**: Handles Craft CMS background jobs
-- **Redis**: Caching and session storage
-- **MySQL**: Database (local development only)
+```yaml
+name: Deploy to Staging
 
-### Deployment Flow
+on:
+  push:
+    branches: [staging]
 
-1. **Build**: Docker images are built and pushed to GHCR
-2. **Deploy**: Images are pulled and deployed to the target server
-3. **Migrate**: Database migrations and cache clearing
-4. **Verify**: Health check with automatic rollback on failure
-5. **Notify**: Slack notifications for success/failure
+jobs:
+  deploy:
+    uses: ./.github/workflows/deployment.yml
+    with:
+      environment: staging
+      domain: staging.yoursite.com
+      basic-auth: ${{ secrets.STAGING_BASIC_AUTH }}
+    secrets: inherit
+```
 
-## Local Development Setup
+### 2. Required Repository Secrets
 
-### Prerequisites
+Configure these secrets in your GitHub repository settings:
 
-- Docker and Docker Compose
-- Node.js (for frontend asset compilation)
-- PHP 8.4+ (optional, for local Craft CLI usage)
-
-### Getting Started
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd craft-docker-deployments
-   ```
-
-2. **Copy environment configuration**
-   ```bash
-   cp .env.example.dev .env
-   ```
-
-3. **Update .env file**
-   Edit `.env` with your local configuration:
-   ```env
-   CRAFT_APP_ID=your-app-id
-   CRAFT_SECURITY_KEY=your-security-key
-   CRAFT_ENVIRONMENT=dev
-   CRAFT_DEV_MODE=true
-   PRIMARY_SITE_URL=http://localhost:3010/
-   ```
-
-4. **Start the development environment**
-   ```bash
-   docker compose up -d
-   ```
-
-5. **Install Craft CMS**
-   ```bash
-   docker compose exec web php craft install
-   ```
-
-6. **Access the application**
-   - Frontend: http://localhost:3010
-   - Admin Panel: http://localhost:3010/admin
-   - Database: localhost:3308 (user: app, password: app)
-
-## Production Deployment Setup
-
-### Server Requirements
-
-- Ubuntu/Debian Linux server
-- Docker and Docker Compose installed
-- nginx-proxy network configured
-- SSH access for deployment user
-
-### Server Preparation
-
-1. **Install Docker on your server**
-   ```bash
-   curl -fsSL https://get.docker.com -o get-docker.sh
-   sh get-docker.sh
-   sudo usermod -aG docker $USER
-   ```
-
-2. **Create nginx-proxy network**
-   ```bash
-   docker network create nginx-proxy
-   ```
-
-3. **Set up nginx-proxy**
-   
-   Copy the nginx-proxy configuration files to your server:
-   ```bash
-   # On your local machine, copy nginx-proxy files to server
-   scp -r infra/nginx-proxy deploy@your-server.com:~/
-   ```
-   
-   **Optional: Add SSL certificates**
-   If you have SSL certificates, copy them to the certs directory:
-   ```bash
-   # Copy your certificate files to includes/certs/
-   # Example for domain: your-domain.com
-   cp your-domain.com.crt nginx-proxy/includes/certs/
-   cp your-domain.com.key nginx-proxy/includes/certs/
-   ```
-   
-   **Optional: Add basic authentication**
-   If you need password protection for certain domains:
-   ```bash
-   # Install htpasswd utility
-   sudo apt-get update && sudo apt-get install apache2-utils
-   
-   # Create htpasswd file for a domain
-   htpasswd -c nginx-proxy/includes/htpasswd/staging.your-domain.com username
-   ```
-   
-   Start the nginx-proxy container:
-   ```bash
-   # Make sure you're in the home directory
-   cd ~/nginx-proxy
-   
-   # Start nginx-proxy using docker-compose
-   docker compose up -d
-   ```
-
-4. **Create deployment user and directories**
-   ```bash
-   sudo useradd -m -s /bin/bash deploy
-   sudo mkdir -p ~/{staging,production}
-   sudo chown deploy:deploy ~/{staging,production}
-   ```
-
-### GitHub Repository Configuration
-
-#### 1. Environment Setup
-
-Create two environments in your GitHub repository:
-- `staging`
-- `production`
-
-Go to: **Settings** → **Environments** → **New environment**
-
-#### 2. Required GitHub Secrets
-
-Configure the following secrets for each environment:
-
-| Secret Name | Description | Example |
-|------------|-------------|---------|
+| Secret | Description | Example |
+|--------|-------------|---------|
 | `DEPLOY_HOST` | Server hostname or IP | `your-server.com` |
-| `DEPLOY_USER` | SSH username for deployment | `deploy` |
-| `DEPLOY_KEY` | Private SSH key for deployment user | `-----BEGIN OPENSSH PRIVATE KEY-----` |
+| `DEPLOY_USER` | SSH username | `deploy` |
+| `DEPLOY_KEY` | SSH private key | `-----BEGIN OPENSSH PRIVATE KEY-----...` |
+| `STAGING_BASIC_AUTH` | Basic auth for staging (optional) | `username:password` |
 
-**Slack Integration for Deployment Notifications:**
+### 3. Repository Variables (Optional)
 
-The deployment workflow includes built-in Slack notifications that will send messages when deployments start, succeed, or fail. Setting up Slack integration is optional but highly recommended for team collaboration.
+For Slack notifications, configure these variables:
 
-| Secret Name | Description | Required |
-|------------|-------------|----------|
-| `SLACK_WEBHOOK_URL` | Slack webhook URL for notifications | Yes |
-| `SLACK_CHANNEL_ID` | Slack channel ID for notifications | Yes |
+| Variable | Description |
+|----------|-------------|
+| `SLACK_WEBHOOK_URL` | Slack incoming webhook URL |
+| `SLACK_CHANNEL_ID` | Slack channel ID for notifications |
 
-#### Setting Up Slack Integration
+### 4. Server Setup
 
-**Step 1: Create a Slack App**
+Ensure your deployment server has:
+- Docker and Docker Compose installed
+- SSH access configured for the deploy user
+- GitHub Container Registry access (handled automatically)
 
-1. Go to [Slack API Apps page](https://api.slack.com/apps) and click **"Create New App"**
-2. Choose **"From scratch"**
-3. Enter an app name (e.g., "GitHub Deployments") and select your workspace
-4. Click **"Create App"**
+## Configuration Options
 
-**Step 2: Enable Incoming Webhooks**
+### Workflow Inputs
 
-1. In your app's settings, navigate to **"Incoming Webhooks"** in the left sidebar
-2. Toggle **"Activate Incoming Webhooks"** to **On**
-3. Click **"Add New Webhook to Workspace"**
-4. Select the channel where you want deployment notifications to appear
-5. Click **"Allow"**
-6. Copy the webhook URL (starts with `https://hooks.slack.com/services/...`)
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `environment` | ✅ | - | Environment name (staging, production, etc.) |
+| `domain` | ✅ | - | Domain name for the deployment |
+| `basic-auth` | ❌ | - | Basic authentication credentials |
+| `health-check-path` | ❌ | `/actions/app/health-check` | Health check endpoint path |
+| `deployment-timeout` | ❌ | `300` | Deployment timeout in seconds |
 
-**Step 3: Get Channel ID**
+### Example with Custom Configuration
 
-1. Open Slack in your browser or desktop app
-2. Navigate to the desired channel
-3. Look at the URL - the channel ID is the part after `/channels/` (e.g., `C1234567890`)
-
-**Step 4: Add Secrets to GitHub**
-
-For each environment (staging and production):
-
-1. Go to your GitHub repository → **Settings** → **Environments**
-2. Select the environment (staging/production)
-3. Add the following secrets:
-   - `SLACK_WEBHOOK_URL`: The webhook URL from Step 2
-   - `SLACK_CHANNEL_ID`: The channel ID from Step 3
-
-#### Troubleshooting Slack Integration
-
-**Notifications not appearing:**
-- Verify both `SLACK_WEBHOOK_URL` and `SLACK_CHANNEL_ID` secrets are set correctly
-- Ensure the Slack app has permission to post to the specified channel
-- Check that the webhook URL is valid and hasn't expired
-
-**Wrong channel receiving notifications:**
-- Double-check the `SLACK_CHANNEL_ID` matches your intended channel
-- Verify the channel ID format (should start with 'C' followed by alphanumeric characters)
-
-**Webhook URL issues:**
-- Webhook URLs can expire or be revoked - regenerate if needed
-- Ensure the URL starts with `https://hooks.slack.com/services/`
-- Make sure there are no extra spaces or characters in the secret value
-
-**App permissions:**
-- If using channel IDs, ensure your Slack app has `channels:read` scope
-- For private channels, the app needs to be invited to the channel
-
-#### Best Practices
-
-- **Channel Naming**: Consider channels like `#project-notify` or `#project-deployments`
-- **Team Access**: Ensure relevant team members have access to notification channels
-- **Testing**: Test notifications with a staging deployment first
-- **Monitoring**: Regularly check that notifications are working as expected
-
-#### 3. Setting up SSH Keys
-
-1. **Generate SSH key pair on your local machine**
-   ```bash
-   ssh-keygen -t ed25519 -C "deployment-key" -f ~/.ssh/deploy_key
-   ```
-
-2. **Add public key to server**
-   ```bash
-   ssh-copy-id -i ~/.ssh/deploy_key.pub deploy@your-server.com
-   ```
-
-3. **Add private key to GitHub Secrets**
-   Copy the content of `~/.ssh/deploy_key` and add it as `DEPLOY_KEY` secret in GitHub.
-
-### Environment Configuration
-
-#### 1. Production .env file
-
-Create `.env` file on your server in the deployment directories:
-
-**For staging** (`~/staging/.env`):
-```env
-# Read about configuration, here:
-# https://craftcms.com/docs/5.x/configure.html
-
-# Set the hostname for the Craft CMS application.
-# This is used by nginx-proxy to route requests to the correct container.
-VIRTUAL_HOST=staging.craft-docker-deployment.elivz.com
-
-# The application ID used to to uniquely store session and cache data, mutex locks, and more
-CRAFT_APP_ID=your-app-id
-
-# The environment Craft is currently running in (dev, staging, production, etc.)
-CRAFT_ENVIRONMENT=staging
-
-# Database connection settings
-CRAFT_DB_DRIVER=mysql
-CRAFT_DB_SERVER=your-db-server
-CRAFT_DB_PORT=3306
-CRAFT_DB_DATABASE=staging_database
-CRAFT_DB_USER=staging_user
-CRAFT_DB_PASSWORD=secure-password
-CRAFT_DB_SCHEMA=public
-CRAFT_DB_TABLE_PREFIX=
-
-# General settings
-CRAFT_SECURITY_KEY=your-security-key
-CRAFT_DEV_MODE=false
-CRAFT_ALLOW_ADMIN_CHANGES=false
-CRAFT_DISALLOW_ROBOTS=true
-CRAFT_STREAM_LOGS=true
+```yaml
+jobs:
+  deploy:
+    uses: ./.github/workflows/deployment.yml
+    with:
+      environment: production
+      domain: yoursite.com
+      health-check-path: /health
+      deployment-timeout: 600
+    secrets: inherit
 ```
 
-**For production** (`~/production/.env`):
-```env
-# Read about configuration, here:
-# https://craftcms.com/docs/5.x/configure.html
+## How It Works
 
-# Set the hostname for the Craft CMS application.
-# This is used by nginx-proxy to route requests to the correct container.
-VIRTUAL_HOST=craft-docker-deployment.elivz.com
+### 1. Build Phase
+- Checks out code and logs into GitHub Container Registry
+- Builds Docker images using `docker-compose.ci.yml`
+- Pushes images with environment-specific tags
+- Utilizes GitHub Actions cache for faster builds
 
-# The application ID used to to uniquely store session and cache data, mutex locks, and more
-CRAFT_APP_ID=your-app-id
+### 2. Deployment Phase
+- Copies Docker Compose configuration to server
+- **Backs up current running images** for rollback capability
+- Pulls and deploys new container images
+- Waits for containers to start successfully
 
-# The environment Craft is currently running in (dev, staging, production, etc.)
-CRAFT_ENVIRONMENT=production
+### 3. Health Check Phase
+- Performs HTTP health checks against the configured endpoint
+- Retries up to 6 times with 10-second intervals
+- Supports basic authentication if configured
 
-# Database connection settings
-CRAFT_DB_DRIVER=mysql
-CRAFT_DB_SERVER=your-db-server
-CRAFT_DB_PORT=3306
-CRAFT_DB_DATABASE=production_database
-CRAFT_DB_USER=production_user
-CRAFT_DB_PASSWORD=secure-password
-CRAFT_DB_SCHEMA=public
-CRAFT_DB_TABLE_PREFIX=
+### 4. Rollback on Failure
+- **Automatically triggers** if deployment or health checks fail
+- Restores previous working container images
+- Verifies rollback success with container status checks
+- Provides detailed logging for troubleshooting
 
-# General settings
-CRAFT_SECURITY_KEY=your-security-key
-CRAFT_DEV_MODE=false
-CRAFT_ALLOW_ADMIN_CHANGES=false
-CRAFT_DISALLOW_ROBOTS=false
-CRAFT_STREAM_LOGS=true
-```
+### 5. Post-Deployment
+- Runs Craft CMS database migrations
+- Clears application caches
+- Sends status notifications to Slack
 
-#### 2. Environment-specific Scaling (Optional)
+## Rollback System
 
-Create additional environment variables on the server for resource management:
+The deployment workflow includes an intelligent rollback mechanism:
 
-```bash
-# In ~/production/.env
-WEB_REPLICAS=2
-WEB_MEMORY_LIMIT=4G
-WEB_MEMORY_RESERVATION=2G
-QUEUE_MEMORY_LIMIT=2G
-QUEUE_MEMORY_RESERVATION=1G
-REDIS_MAX_MEMORY=4gb
-```
+### How Rollback Works
+1. **Before deployment**: Current running images are tagged as `{environment}-previous`
+2. **On failure**: Containers are stopped and previous images are restored
+3. **Verification**: Rollback success is verified by checking container status
+4. **Logging**: Detailed status information helps with troubleshooting
 
-### Domain Configuration
+### When Rollback Triggers
+- Docker Compose deployment failures
+- Container startup failures
+- Health check failures (HTTP endpoint unreachable)
+- Any critical error during the deployment process
 
-Update the domain names in the workflow files:
+## Docker Compose Files
 
-1. **Staging**: Edit `.github/workflows/deployment-staging.yml`
-   ```yaml
-   domain: staging.your-domain.com
-   ```
+### `docker-compose.ci.yml`
+Used for building and pushing images during CI:
+- Defines build context and Dockerfile location
+- Configures image tags and registry settings
 
-2. **Production**: Edit `.github/workflows/deployment-production.yml`
-   ```yaml
-   domain: www.your-domain.com
-   ```
+### `docker-compose.deployment.yml`
+Template for production deployments:
+- Uses placeholder variables for environment-specific configuration
+- Includes health checks and resource limits
+- Configured automatically during deployment
 
-## Deployment Process
+## Slack Notifications
 
-### Automatic Deployments
+Configure Slack notifications to keep your team informed:
 
-- **Staging**: Automatically deploys when code is pushed to `staging` branch
-- **Production**: Automatically deploys when code is pushed to `main` branch
-
-### Manual Deployments
-
-Trigger manual deployments from GitHub Actions:
-
-1. Go to **Actions** tab in your GitHub repository
-2. Select the appropriate workflow (Deploy to Staging/Production)
-3. Click **Run workflow**
-4. Select the branch and click **Run workflow**
-
-### Deployment Steps
-
-Each deployment follows these steps:
-
-1. **Build Phase**
-   - Builds Docker image with multi-stage process
-   - Compiles frontend assets with Vite
-   - Installs PHP dependencies with Composer
-   - Pushes image to GitHub Container Registry
-
-2. **Deploy Phase**
-   - Copies docker-compose.yml to server
-   - Pulls latest images
-   - Updates container configuration
-   - Starts containers with zero-downtime deployment
-
-3. **Migration Phase**
-   - Runs Craft CMS database migrations
-   - Clears compiled templates and caches
-   - Invalidates cache tags
-
-4. **Verification Phase**
-   - Performs health check on `/actions/app/health-check`
-   - Automatically rolls back on failure
-   - Sends success/failure notifications
-
-## Monitoring and Maintenance
-
-### Health Checks
-
-The application includes built-in health checks:
-- **Web container**: `curl -sf http://localhost:8080/actions/app/health-check`
-- **Queue container**: `php craft queue/info`
-- **Redis**: `redis-cli ping`
-
-### Logs
-
-View application logs:
-```bash
-# On the server
-cd ~/production  # or staging
-docker compose logs -f web
-docker compose logs -f queue
-```
-
-### Database Backups
-
-Set up regular database backups:
-```bash
-# Example backup script
-docker compose exec web php craft backup/db
-```
-
-### Scaling
-
-Adjust container resources by updating environment variables in `.env`:
-```env
-WEB_REPLICAS=3
-WEB_MEMORY_LIMIT=6G
-QUEUE_MEMORY_LIMIT=3G
-```
-
-Then restart the deployment:
-```bash
-docker compose up -d --scale web=3
-```
+1. Create a Slack app and incoming webhook
+2. Add `SLACK_WEBHOOK_URL` and `SLACK_CHANNEL_ID` as repository variables
+3. Notifications include:
+   - Deployment start/success/failure status
+   - Environment and domain information
+   - Links to workflow runs and code changes
+   - Visual status indicators with emojis
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Deployment fails with authentication error**
-   - Verify `DEPLOY_KEY` secret is correctly formatted
-   - Ensure SSH key is properly added to the server
+**Deployment Fails with "name invalid" error**
+- ✅ **Fixed**: The improved workflow properly handles image rollback
+- Previous images are now preserved during deployment
 
-2. **Health check fails**
-   - Check application logs for errors
-   - Verify database connectivity
-   - Ensure all environment variables are set
+**Health checks timeout**
+- Increase `deployment-timeout` input value
+- Verify health check endpoint is accessible
+- Check basic auth credentials if required
 
-3. **Image pull fails**
-   - Check GitHub Container Registry permissions
-   - Verify `GITHUB_TOKEN` has necessary permissions
+**SSH connection failures**
+- Verify `DEPLOY_HOST`, `DEPLOY_USER`, and `DEPLOY_KEY` secrets
+- Ensure SSH key has proper permissions on the server
+- Test SSH connection manually: `ssh user@host`
 
-4. **Database connection issues**
-   - Verify database credentials in `.env`
-   - Check database server accessibility
-   - Ensure database and user exist
+**Rollback fails**
+- Check server logs for container status
+- Verify Docker images exist on the server
+- Ensure sufficient disk space for image storage
 
-### Debug Commands
+### Debugging
 
-```bash
-# Check container status
-docker compose ps
+Enable verbose logging by checking the GitHub Actions workflow logs:
+- Build logs show Docker build output and caching information
+- Deployment logs include container startup and health check details
+- Rollback logs provide step-by-step restoration information
 
-# View application logs
-docker compose logs web
+## Best Practices
 
-# Access container shell
-docker compose exec web bash
+### Branch Strategy
+- Use separate workflows for different environments
+- Deploy staging from `staging` branch, production from `main`
+- Test deployments in staging before promoting to production
 
-# Check Craft CMS status
-docker compose exec web php craft status
+### Security
+- Use dedicated deploy user with minimal required permissions
+- Rotate SSH keys regularly
+- Keep secrets up to date and secure
 
-# Run Craft commands
-docker compose exec web php craft queue/info
-docker compose exec web php craft cache/flush-all
+### Monitoring
+- Set up proper health check endpoints in your application
+- Monitor deployment notifications in Slack
+- Review GitHub Actions logs for any warnings
+
+### Performance
+- Keep Docker images lean to reduce deployment time
+- Utilize build caching for faster CI builds
+- Consider using multi-stage builds for optimization
+
+## Advanced Configuration
+
+### Custom Health Check Endpoint
+
+Create a custom health check in your Craft CMS application:
+
+```php
+// In your controller or module
+public function actionHealthCheck()
+{
+    // Check database connectivity
+    $dbOk = Craft::$app->getDb()->getIsActive();
+    
+    // Check other services (Redis, external APIs, etc.)
+    $redisOk = // your Redis check
+    
+    if ($dbOk && $redisOk) {
+        return $this->asJson(['status' => 'ok']);
+    }
+    
+    Craft::$app->getResponse()->setStatusCode(503);
+    return $this->asJson(['status' => 'error']);
+}
 ```
 
-## Security Considerations
+### Environment-Specific Configurations
 
-- Always use strong, unique passwords for databases and Redis
-- Keep the `CRAFT_SECURITY_KEY` secure and unique per environment
-- Use SSH keys instead of passwords for server access
-- Regularly update Docker images and dependencies
-- Enable firewall on the server
-- Use SSL/TLS certificates (handled by nginx-proxy)
-- Limit database access to necessary hosts only
+Use different configurations for each environment:
+
+```yaml
+# .github/workflows/deploy-staging.yml
+on:
+  push:
+    branches: [staging]
+jobs:
+  deploy:
+    uses: ./.github/workflows/deployment.yml
+    with:
+      environment: staging
+      domain: staging.yoursite.com
+      deployment-timeout: 300
+      basic-auth: ${{ secrets.STAGING_BASIC_AUTH }}
+
+# .github/workflows/deploy-production.yml  
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    uses: ./.github/workflows/deployment.yml
+    with:
+      environment: production
+      domain: yoursite.com
+      deployment-timeout: 600
+```
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test the deployment process
-5. Submit a pull request
+When contributing to this deployment workflow:
+
+1. Test changes in a staging environment first
+2. Update documentation for any new features
+3. Ensure backward compatibility when possible
+4. Add appropriate error handling and logging
 
 ## License
 
-This project is open-source and available under the MIT License.
+This deployment workflow is open source and available under the [MIT License](LICENSE).

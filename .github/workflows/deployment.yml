@@ -11,30 +11,38 @@ on:
         type: string
       basic-auth:
         type: string
+      health-check-path:
+        type: string
+        default: '/actions/app/health-check'
+        description: 'Health check endpoint path'
+      deployment-timeout:
+        type: number
+        default: 300
+        description: 'Deployment timeout in seconds'
+
+env:
+  GHCR_REGISTRY: ghcr.io
+  GHCR_REPOSITORY: ${{ github.repository }}/web
 
 jobs:
-  # Job 1: Notify start and build/push Docker images
+  # Job 1: Build and push Docker images
   build:
     name: Build and Push Images
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
-    env:
-      GHCR_REGISTRY: ghcr.io
-      GHCR_REPOSITORY: ${{ github.repository }}/web
-      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-      SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
     outputs:
       slack-ts: ${{ steps.slack.outputs.ts }}
+      image-digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Send started notification to Slack
         uses: slackapi/slack-github-action@v1.26.0
-        if: ${{ env.SLACK_WEBHOOK_URL != '' && env.SLACK_CHANNEL_ID != '' }}
+        if: ${{ vars.SLACK_WEBHOOK_URL != '' && vars.SLACK_CHANNEL_ID != '' }}
         id: slack
         env:
-          SLACK_WEBHOOK_URL: ${{ env.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ vars.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
         with:
-          channel-id: ${{ env.SLACK_CHANNEL_ID }}
+          channel-id: ${{ vars.SLACK_CHANNEL_ID }}
           payload: |
             {
               "text": "${{ github.workflow }} started (In Progress)",
@@ -51,23 +59,30 @@ jobs:
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": "*Workflow*: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\n*Code Changes*: ${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
+                    "text": "*Environment*: `${{ inputs.environment }}`\n*Domain*: `${{ inputs.domain }}`\n*Workflow*: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\n*Code Changes*: ${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
                   }
                 }
               ]
             }
-      - uses: actions/checkout@v4
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.GHCR_REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Touch .env # Docker will fail if a .env doesn't exist at build even though it is not copied into the container
+
+      - name: Create .env file
         run: touch .env
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
       - name: Build and push images
+        id: build
         uses: docker/bake-action@v6
         with:
           files: docker-compose.ci.yml
@@ -79,17 +94,24 @@ jobs:
         env:
           BRANCH: ${{ inputs.environment }}
 
-  # Job 2: Deploy containers to server and verify health
+  # Job 2: Deploy containers and verify health
   deploy-and-verify:
     name: Deploy and Verify
     runs-on: ubuntu-latest
     needs: build
     environment: ${{ inputs.environment }}
-    env:
-      GHCR_REGISTRY: ghcr.io
-      GHCR_REPOSITORY: ${{ github.repository }}/web
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate required secrets
+        run: |
+          if [ -z "${{ secrets.DEPLOY_HOST }}" ] || [ -z "${{ secrets.DEPLOY_USER }}" ] || [ -z "${{ secrets.DEPLOY_KEY }}" ]; then
+            echo "Error: Missing required deployment secrets (DEPLOY_HOST, DEPLOY_USER, DEPLOY_KEY)"
+            exit 1
+          fi
+
       - name: Copy Docker configuration
         uses: easingthemes/ssh-deploy@main
         with:
@@ -99,7 +121,8 @@ jobs:
           ARGS: "-rltgoDzvO"
           SOURCE: "docker-compose.deployment.yml"
           TARGET: "${{ inputs.environment }}/docker-compose.yml"
-      - name: Pull images and restart containers
+
+      - name: Deploy containers
         id: deploy
         uses: appleboy/ssh-action@v1.0.3
         continue-on-error: true
@@ -107,74 +130,113 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
+          command_timeout: ${{ inputs.deployment-timeout }}s
           script: |
             set -e
             source ~/.bashrc
+            
+            # Setup environment
             mkdir -p ${{ inputs.environment }}
             cd ${{ inputs.environment }}
+            
+            # Login to registry
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login --username ${{ github.actor }} --password-stdin ${{ env.GHCR_REGISTRY }}
+            
+            # Configure docker-compose file
             sed -i -e "s/{BRANCH}/${{ inputs.environment }}/g" docker-compose.yml
             sed -i -e "s/{VIRTUAL_HOST}/${{ inputs.domain }}/g" docker-compose.yml
-            # Set GHCR environment variables for docker-compose
+            
+            # Set environment variables for docker-compose
             export GHCR_REGISTRY="${{ env.GHCR_REGISTRY }}"
             export GHCR_REPOSITORY="${{ env.GHCR_REPOSITORY }}"
             
-            # Tag current images as 'previous' for rollback purposes (if they exist)
-            if docker compose images -q web >/dev/null 2>&1; then
+            # Backup current images for rollback (if they exist)
+            echo "Backing up current images for potential rollback..."
+            if docker compose ps --services --filter "status=running" | grep -q web; then
               CURRENT_WEB_IMAGE=$(docker compose images -q web | head -n1)
               if [ ! -z "$CURRENT_WEB_IMAGE" ]; then
-                docker tag $CURRENT_WEB_IMAGE ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_REPOSITORY }}:${{ inputs.environment }}-previous
-                echo "Tagged current web image as previous: ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_REPOSITORY }}:${{ inputs.environment }}-previous"
+                docker tag "$CURRENT_WEB_IMAGE" "${{ env.GHCR_REGISTRY }}/${{ env.GHCR_REPOSITORY }}:${{ inputs.environment }}-previous"
+                echo "✓ Tagged current image as: ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_REPOSITORY }}:${{ inputs.environment }}-previous"
               fi
+            else
+              echo "ℹ No running containers found to backup"
             fi
             
-            # Pull down new images
+            # Deploy new version
+            echo "Pulling new images..."
             docker compose pull -q
+            
+            echo "Starting containers..."
             docker compose up --detach --no-build --wait --remove-orphans
+            
+            echo "✓ Deployment completed successfully"
+
       - name: Health Check
         id: health-check
         if: steps.deploy.outcome == 'success'
         uses: jtalk/url-health-check-action@v4
         with:
-          url: https://${{ inputs.domain }}/actions/app/health-check
-          max-attempts: 4
+          url: https://${{ inputs.domain }}${{ inputs.health-check-path }}
+          max-attempts: 6
           retry-delay: 5s
           basic-auth: ${{ inputs.basic-auth }}
+
       - name: Rollback on failure
-        if: steps.deploy.outcome == 'failure' || steps.health-check.outcome == 'failure'
+        if: always() && (steps.deploy.outcome == 'failure' || steps.health-check.outcome == 'failure')
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
+          command_timeout: 120s
           script: |
             set -e
             source ~/.bashrc
             cd ${{ inputs.environment }}
-            echo "Deployment or health check failed, rolling back to previous image..."
             
-            # Set GHCR environment variables for docker-compose
+            echo "🚨 Deployment or health check failed, initiating rollback..."
+            
+            # Set environment variables
             export GHCR_REGISTRY="${{ env.GHCR_REGISTRY }}"
             export GHCR_REPOSITORY="${{ env.GHCR_REPOSITORY }}"
             
-            # Stop current containers (if running)
-            docker compose down || true
+            # Stop current containers gracefully
+            echo "Stopping current containers..."
+            docker compose down --timeout 30 || true
             
-            # Check if previous image exists and rollback
-            if [ "$(docker images -q ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_REPOSITORY }}:${{ inputs.environment }}-previous 2> /dev/null)" ]; then
-              echo "Rolling back to previous image..."
-              # Tag the previous image as current
-              docker tag ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_REPOSITORY }}:${{ inputs.environment }}-previous ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_REPOSITORY }}:${{ inputs.environment }}
+            # Rollback to previous image
+            PREVIOUS_IMAGE="${{ env.GHCR_REGISTRY }}/${{ env.GHCR_REPOSITORY }}:${{ inputs.environment }}-previous"
+            if docker images --format "table {{.Repository}}:{{.Tag}}" | grep -q "$PREVIOUS_IMAGE"; then
+              echo "Rolling back to previous image: $PREVIOUS_IMAGE"
+              
+              # Re-tag previous image as current
+              docker tag "$PREVIOUS_IMAGE" "${{ env.GHCR_REGISTRY }}/${{ env.GHCR_REPOSITORY }}:${{ inputs.environment }}"
+              
               # Start containers with previous image
-              docker compose up --detach --wait
-              echo "Rollback completed successfully"
+              docker compose up --detach --wait --timeout 60
+              
+              echo "✅ Rollback completed successfully"
+              
+              # Verify rollback health
+              sleep 5
+              if docker compose ps --services --filter "status=running" | grep -q web; then
+                echo "✓ Rollback verification: containers are running"
+              else
+                echo "⚠ Warning: Rollback verification failed - containers may not be running properly"
+              fi
             else
-              echo "No previous image found for rollback. Manual intervention required."
+              echo "❌ No previous image found for rollback: $PREVIOUS_IMAGE"
+              echo "Available images:"
+              docker images --format "table {{.Repository}}:{{.Tag}}\t{{.CreatedAt}}" | grep "${{ env.GHCR_REPOSITORY }}" || echo "No images found"
+              echo "Manual intervention required."
               exit 1
             fi
+
       - name: Mark deployment as failed
         if: steps.deploy.outcome == 'failure' || steps.health-check.outcome == 'failure'
-        run: exit 1
+        run: |
+          echo "::error::Deployment failed and rollback was attempted"
+          exit 1
 
   # Job 3: Run database migrations and clear caches
   migrate:
@@ -182,52 +244,72 @@ jobs:
     runs-on: ubuntu-latest
     needs: deploy-and-verify
     environment: ${{ inputs.environment }}
+    timeout-minutes: 30
     steps:
-      - name: Run Craft database migrations and clear caches
+      - name: Run Craft migrations and clear caches
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
-          command_timeout: 30m
+          command_timeout: 25m
           script: |
             set -e
             source ~/.bashrc
             cd ${{ inputs.environment }}
-            docker compose exec web php craft up --interactive=0
-            docker compose exec web php craft clear-caches/compiled-classes --interactive=0
-            docker compose exec web php craft clear-caches/compiled-templates --interactive=0
-            docker compose exec web php craft invalidate-tags/all --interactive=0
+            
+            echo "Running database migrations..."
+            docker compose exec -T web php craft up --interactive=0
+            
+            echo "Clearing caches..."
+            docker compose exec -T web php craft clear-caches/compiled-classes --interactive=0
+            docker compose exec -T web php craft clear-caches/compiled-templates --interactive=0
+            docker compose exec -T web php craft invalidate-tags/all --interactive=0
+            
+            echo "✅ Migrations and cache clearing completed"
 
-
-  # Job 4: Send notifications based on overall workflow status
+  # Job 4: Send notifications
   notify:
     name: Send Notifications
     runs-on: ubuntu-latest
-    env:
-      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-      SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
     needs: [build, deploy-and-verify, migrate]
     if: always()
     steps:
-      - name: Send failure notification to Slack
+      - name: Determine workflow status
+        id: status
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "icon=🚨" >> $GITHUB_OUTPUT
+            echo "message=failed" >> $GITHUB_OUTPUT
+          elif [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "status=cancelled" >> $GITHUB_OUTPUT
+            echo "icon=⏹️" >> $GITHUB_OUTPUT
+            echo "message=cancelled" >> $GITHUB_OUTPUT
+          else
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "icon=✅" >> $GITHUB_OUTPUT
+            echo "message=completed successfully" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send notification to Slack
         uses: slackapi/slack-github-action@v1.26.0
-        if: ${{ contains(needs.*.result, 'failure') && env.SLACK_WEBHOOK_URL != '' && env.SLACK_CHANNEL_ID != '' }}
+        if: ${{ vars.SLACK_WEBHOOK_URL != '' && vars.SLACK_CHANNEL_ID != '' }}
         env:
-          SLACK_WEBHOOK_URL: ${{ env.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ vars.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
         with:
-          channel-id: ${{ env.SLACK_CHANNEL_ID }}
+          channel-id: ${{ vars.SLACK_CHANNEL_ID }}
           update-ts: ${{ needs.build.outputs.slack-ts }}
           payload: |
             {
-              "text": "${{ github.workflow }} finished (Failed)",
+              "text": "${{ github.workflow }} ${{ steps.status.outputs.message }}",
               "blocks": [
                 {
                   "type": "header",
                   "text": {
                     "type": "plain_text",
-                    "text": "${{ github.workflow }} failed 🚨",
+                    "text": "${{ github.workflow }} ${{ steps.status.outputs.message }} ${{ steps.status.outputs.icon }}",
                     "emoji": true
                   }
                 },
@@ -235,38 +317,8 @@ jobs:
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": "*Workflow*: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\n*Code Changes*: ${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
+                    "text": "*Environment*: `${{ inputs.environment }}`\n*Domain*: `${{ inputs.domain }}`\n*Status*: ${{ steps.status.outputs.status }}\n*Workflow*: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\n*Code Changes*: ${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
                   }
                 }
               ]
             }
-      - name: Send success notification to Slack
-        uses: slackapi/slack-github-action@v1.26.0
-        if: ${{ !contains(needs.*.result, 'failure') && env.SLACK_WEBHOOK_URL != '' && env.SLACK_CHANNEL_ID != '' }}
-        with:
-          channel-id: ${{ env.SLACK_CHANNEL_ID }}
-          update-ts: ${{ needs.build.outputs.slack-ts }}
-          payload: |
-            {
-              "text": "${{ github.workflow }} finished (Completed)",
-              "blocks": [
-                {
-                  "type": "header",
-                  "text": {
-                    "type": "plain_text",
-                    "text": "${{ github.workflow }} finished ✅",
-                    "emoji": true
-                  }
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*Workflow*: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\n*Code Changes*: ${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
-                  }
-                }
-              ]
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ env.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

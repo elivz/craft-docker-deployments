@@ -143,10 +143,10 @@ jobs:
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login --username ${{ github.actor }} --password-stdin ${{ env.GHCR_REGISTRY }}
             
             # Configure docker-compose file
-            sed -i -e "s/{BRANCH}/${{ inputs.environment }}/g" docker-compose.yml
-            sed -i -e "s/{VIRTUAL_HOST}/${{ inputs.domain }}/g" docker-compose.yml
-            sed -i -e "s/{GHCR_REGISTRY}/${{ env.GHCR_REGISTRY }}/g" docker-compose.yml
-            sed -i -e "s/{GHCR_REPOSITORY}/${{ env.GHCR_REPOSITORY }}/g" docker-compose.yml
+            sed -i -e "s|{BRANCH}|${{ inputs.environment }}|g" docker-compose.yml
+            sed -i -e "s|{VIRTUAL_HOST}|${{ inputs.domain }}|g" docker-compose.yml
+            sed -i -e "s|{GHCR_REGISTRY}|${{ env.GHCR_REGISTRY }}|g" docker-compose.yml
+            sed -i -e "s|{GHCR_REPOSITORY}|${{ env.GHCR_REPOSITORY }}|g" docker-compose.yml
             
             # Backup current images for rollback (if they exist)
             echo "Backing up current images for potential rollback..."

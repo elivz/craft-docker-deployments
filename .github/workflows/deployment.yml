@@ -233,10 +233,11 @@ jobs:
   cleanup-images:
     name: Cleanup old images
     runs-on: ubuntu-latest
-    if: steps.deploy.outcome == 'success' && steps.health-check.outcome == 'success'
     needs: deploy-and-verify
     steps:
-      - uses: actions/delete-package-versions@v5
+      - name: Remove old untagged images
+        uses: actions/delete-package-versions@v5
+        if: steps.deploy.outcome == 'success' && steps.health-check.outcome == 'success'
         with:
           package-name: ${{ env.GHCR_REPOSITORY }}
           package-type: 'container'

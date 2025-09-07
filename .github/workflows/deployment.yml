@@ -18,7 +18,6 @@ on:
 
 env:
   GHCR_REGISTRY: ghcr.io
-  GHCR_PACKAGE: web
   GHCR_REPOSITORY: ${{ github.repository }}/web
 
 jobs:
@@ -239,7 +238,7 @@ jobs:
       - name: Remove old untagged images
         uses: actions/delete-package-versions@v5
         with:
-          package-name: ${{ env.GHCR_PACKAGE }}
+          package-name: 'web'
           package-type: 'container'
           min-versions-to-keep: 10
           ignore-versions: '^[a-zA-Z-]+$'

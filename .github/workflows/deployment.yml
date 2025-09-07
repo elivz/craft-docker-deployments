@@ -232,6 +232,7 @@ jobs:
   # Job 3: Cleanup old images
   cleanup-images:
     name: Cleanup old images
+    runs-on: ubuntu-latest
     if: steps.deploy.outcome == 'success' && steps.health-check.outcome == 'success'
     needs: deploy-and-verify
     steps:

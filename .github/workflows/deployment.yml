@@ -18,7 +18,8 @@ on:
 
 env:
   GHCR_REGISTRY: ghcr.io
-  GHCR_REPOSITORY: ${{ github.repository }}/web
+  GHCR_PACKAGE: web
+  GHCR_REPOSITORY: ${{ github.repository }}/${{ env.GHCR_PACKAGE }}
 
 jobs:
   # Job 1: Build and push Docker images
@@ -238,7 +239,7 @@ jobs:
       - name: Remove old untagged images
         uses: actions/delete-package-versions@v5
         with:
-          package-name: ${{ env.GHCR_REPOSITORY }}
+          package-name: ${{ env.GHCR_PACKAGE }}
           package-type: 'container'
           min-versions-to-keep: 10
           ignore-versions: '^[a-zA-Z-]+$'

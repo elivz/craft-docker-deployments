@@ -227,6 +227,20 @@ jobs:
         run: |
           echo "::error::Deployment failed and rollback was attempted"
           exit 1
+          
+
+  # Job 3: Cleanup old images
+  cleanup-images:
+    name: Cleanup old images
+    if: steps.deploy.outcome == 'success' && steps.health-check.outcome == 'success'
+    needs: deploy-and-verify
+    steps:
+      - uses: actions/delete-package-versions@v5
+        with:
+          package-name: ${{ env.GHCR_REPOSITORY }}
+          package-type: 'container'
+          min-versions-to-keep: 10
+          delete-only-untagged-versions: 'true'
 
   # Job 3: Run database migrations and clear caches
   migrate:

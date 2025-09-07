@@ -237,7 +237,6 @@ jobs:
     steps:
       - name: Remove old untagged images
         uses: actions/delete-package-versions@v5
-        if: steps.deploy.outcome == 'success' && steps.health-check.outcome == 'success'
         with:
           package-name: ${{ env.GHCR_REPOSITORY }}
           package-type: 'container'

@@ -103,9 +103,6 @@ jobs:
     needs: build
     environment: ${{ inputs.environment }}
     timeout-minutes: 10
-    outputs:
-      current-color: ${{ steps.deploy.outputs.current-color }}
-      target-color: ${{ steps.deploy.outputs.target-color }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -172,9 +169,9 @@ jobs:
               echo "🆕 No active deployment found → Deploying to: BLUE"
             fi
             
-            # Output deployment info for use in other steps
-            echo "current-color=$CURRENT_COLOR" >> $GITHUB_OUTPUT
-            echo "target-color=$TARGET_COLOR" >> $GITHUB_OUTPUT
+            # Store deployment info for use in other steps
+            echo "CURRENT_COLOR=$CURRENT_COLOR" >> deployment.env
+            echo "TARGET_COLOR=$TARGET_COLOR" >> deployment.env
             
             # Pull new images
             echo "📥 Pulling new images..."
@@ -223,8 +220,8 @@ jobs:
             source ~/.bashrc
             cd ${{ inputs.environment }}
             
-            CURRENT_COLOR="${{ steps.deploy.outputs.current-color }}"
-            TARGET_COLOR="${{ steps.deploy.outputs.target-color }}"
+            # Read deployment state
+            source deployment.env
             
             echo "🔄 Completing blue-green deployment..."
             echo "Current: $CURRENT_COLOR → Target: $TARGET_COLOR"
@@ -242,6 +239,9 @@ jobs:
             
             echo "✅ Blue-green deployment completed successfully!"
             echo "🎯 Active deployment: $TARGET_COLOR"
+            
+            # Cleanup deployment state file
+            rm -f deployment.env
 
       - name: Rollback on failure
         if: always() && (steps.deploy.outcome == 'failure' || steps.health-check.outcome == 'failure')
@@ -256,28 +256,36 @@ jobs:
             source ~/.bashrc
             cd ${{ inputs.environment }}
             
-            CURRENT_COLOR="${{ steps.deploy.outputs.current-color }}"
-            TARGET_COLOR="${{ steps.deploy.outputs.target-color }}"
-            
             echo "🚨 Deployment or health check failed, initiating blue-green rollback..."
-            echo "Rollback info - Current: $CURRENT_COLOR, Failed Target: $TARGET_COLOR"
             
-            # Stop the failed target deployment
-            echo "⏹️ Stopping failed $TARGET_COLOR services..."
-            docker compose stop web-$TARGET_COLOR queue-$TARGET_COLOR || true
-            docker compose rm -f web-$TARGET_COLOR queue-$TARGET_COLOR || true
-            
-            if [ "$CURRENT_COLOR" != "none" ]; then
-              # Ensure the previous working color is still running
-              echo "🔍 Verifying $CURRENT_COLOR services are running..."
-              CURRENT_RUNNING=$(docker compose ps --services --filter "status=running" | grep "web-$CURRENT_COLOR" | wc -l)
-              if [ "$CURRENT_RUNNING" -eq 0 ]; then
-                echo "🔄 Restarting $CURRENT_COLOR services..."
-                docker compose up --detach --no-build web-$CURRENT_COLOR queue-$CURRENT_COLOR redis --wait
+            # Read deployment state if it exists
+            if [ -f deployment.env ]; then
+              source deployment.env
+              echo "Rollback info - Current: $CURRENT_COLOR, Failed Target: $TARGET_COLOR"
+              
+              # Stop the failed target deployment
+              echo "⏹️ Stopping failed $TARGET_COLOR services..."
+              docker compose stop web-$TARGET_COLOR queue-$TARGET_COLOR || true
+              docker compose rm -f web-$TARGET_COLOR queue-$TARGET_COLOR || true
+              
+              if [ "$CURRENT_COLOR" != "none" ]; then
+                # Ensure the previous working color is still running
+                echo "🔍 Verifying $CURRENT_COLOR services are running..."
+                CURRENT_RUNNING=$(docker compose ps --services --filter "status=running" | grep "web-$CURRENT_COLOR" | wc -l)
+                if [ "$CURRENT_RUNNING" -eq 0 ]; then
+                  echo "🔄 Restarting $CURRENT_COLOR services..."
+                  docker compose up --detach --no-build web-$CURRENT_COLOR queue-$CURRENT_COLOR redis --wait
+                fi
+                echo "✅ Rollback completed - $CURRENT_COLOR is active"
+              else
+                echo "❌ No previous deployment to rollback to"
+                exit 1
               fi
-              echo "✅ Rollback completed - $CURRENT_COLOR is active"
+              
+              # Cleanup
+              rm -f deployment.env
             else
-              echo "❌ No previous deployment to rollback to"
+              echo "❌ No deployment state found - manual intervention may be required"
               exit 1
             fi
 

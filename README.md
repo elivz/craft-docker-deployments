@@ -47,21 +47,33 @@ Configure these secrets in your GitHub repository settings:
 | `DEPLOY_KEY` | SSH private key | `-----BEGIN OPENSSH PRIVATE KEY-----...` |
 | `STAGING_BASIC_AUTH` | Basic auth for staging (optional) | `username:password` |
 
-### 3. Repository Variables (Optional)
-
-For Slack notifications, configure these variables:
-
-| Variable | Description |
-|----------|-------------|
-| `SLACK_WEBHOOK_URL` | Slack incoming webhook URL |
-| `SLACK_CHANNEL_ID` | Slack channel ID for notifications |
-
-### 4. Server Setup
+### 3. Server Setup
 
 Ensure your deployment server has:
 - Docker and Docker Compose installed
 - SSH access configured for the deploy user
 - GitHub Container Registry access (handled automatically)
+
+### 4. Slack Notifications (Optional)
+
+Set up deployment notifications using GitHub's official Slack app for better integration and easier management:
+
+1. **Install GitHub for Slack**: Visit [slack.github.com](https://slack.github.com/) and install the GitHub app to your Slack workspace
+2. **Connect your repository**: In your Slack channel, run `/github subscribe owner/repo-name`
+3. **Configure notifications**: Subscribe to workflow events:
+   ```
+   /github subscribe owner/repo-name workflows
+   ```
+4. **Customize notifications**: You can also subscribe to specific events:
+   ```
+   /github subscribe owner/repo-name workflows:* deployments
+   ```
+
+This provides automatic notifications for:
+- Workflow runs (started, completed, failed)
+- Deployment status updates
+- Direct links to workflow logs and commit details
+- Rich formatting with status indicators
 
 ## Configuration Options
 
@@ -121,7 +133,7 @@ jobs:
 ### 6. Post-Deployment
 - Runs Craft CMS database migrations on the active deployment
 - Clears application caches
-- Sends status notifications to Slack
+- Cleans up old Docker images to maintain server storage
 
 ## Blue-Green Deployment System
 
@@ -178,18 +190,6 @@ Template for zero-downtime production deployments:
 - **Health checks**: Built-in container health monitoring for deployment verification
 - **Resource limits**: Configurable memory and replica settings per environment
 - **Legacy compatibility**: Maintains backward compatibility with single-service deployments
-
-## Slack Notifications
-
-Configure Slack notifications to keep your team informed:
-
-1. Create a Slack app and incoming webhook
-2. Add `SLACK_WEBHOOK_URL` and `SLACK_CHANNEL_ID` as repository variables
-3. Notifications include:
-   - Deployment start/success/failure status
-   - Environment and domain information
-   - Links to workflow runs and code changes
-   - Visual status indicators with emojis
 
 ## Troubleshooting
 
@@ -251,8 +251,9 @@ Enable verbose logging by checking the GitHub Actions workflow logs:
 
 ### Monitoring
 - Set up proper health check endpoints in your application
-- Monitor deployment notifications in Slack
+- Use GitHub's official Slack app for deployment notifications
 - Review GitHub Actions logs for any warnings
+- Monitor nginx-proxy logs for traffic routing issues
 
 ### Performance
 - Keep Docker images lean to reduce deployment time

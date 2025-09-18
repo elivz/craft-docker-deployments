@@ -26,8 +26,6 @@ jobs:
     name: Build and Push Images
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
-    outputs:
-      slack-ts: ${{ steps.slack.outputs.ts }}
     steps:
       - name: Validate required secrets
         run: |
@@ -35,37 +33,6 @@ jobs:
             echo "Error: Missing required deployment secrets (DEPLOY_HOST, DEPLOY_USER, DEPLOY_KEY)"
             exit 1
           fi
-
-      - name: Send started notification to Slack
-        uses: slackapi/slack-github-action@v1.26.0
-        if: ${{ vars.SLACK_WEBHOOK_URL != '' && vars.SLACK_CHANNEL_ID != '' }}
-        id: slack
-        env:
-          SLACK_WEBHOOK_URL: ${{ vars.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
-        with:
-          channel-id: ${{ vars.SLACK_CHANNEL_ID }}
-          payload: |
-            {
-              "text": "${{ github.workflow }} started (In Progress)",
-              "blocks": [
-                {
-                  "type": "header",
-                  "text": {
-                    "type": "plain_text",
-                    "text": "${{ github.workflow }} started ⏳",
-                    "emoji": true
-                  }
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*Environment*: `${{ inputs.environment }}`\n*Domain*: `${{ inputs.domain }}`\n*Workflow*: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\n*Code Changes*: ${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
-                  }
-                }
-              ]
-            }
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -352,58 +319,3 @@ jobs:
             docker compose exec -T web-$ACTIVE_COLOR php craft invalidate-tags/all --interactive=0
             
             echo "✅ Migrations and cache clearing completed"
-
-  # Job 4: Send notifications
-  notify:
-    name: Send Notifications
-    runs-on: ubuntu-latest
-    needs: [build, deploy-and-verify, migrate]
-    if: always()
-    steps:
-      - name: Determine workflow status
-        id: status
-        run: |
-          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
-            echo "status=failure" >> $GITHUB_OUTPUT
-            echo "icon=🚨" >> $GITHUB_OUTPUT
-            echo "message=failed" >> $GITHUB_OUTPUT
-          elif [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
-            echo "status=cancelled" >> $GITHUB_OUTPUT
-            echo "icon=⏹️" >> $GITHUB_OUTPUT
-            echo "message=cancelled" >> $GITHUB_OUTPUT
-          else
-            echo "status=success" >> $GITHUB_OUTPUT
-            echo "icon=✅" >> $GITHUB_OUTPUT
-            echo "message=completed successfully" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Send notification to Slack
-        uses: slackapi/slack-github-action@v1.26.0
-        if: ${{ vars.SLACK_WEBHOOK_URL != '' && vars.SLACK_CHANNEL_ID != '' }}
-        env:
-          SLACK_WEBHOOK_URL: ${{ vars.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
-        with:
-          channel-id: ${{ vars.SLACK_CHANNEL_ID }}
-          update-ts: ${{ needs.build.outputs.slack-ts }}
-          payload: |
-            {
-              "text": "${{ github.workflow }} ${{ steps.status.outputs.message }}",
-              "blocks": [
-                {
-                  "type": "header",
-                  "text": {
-                    "type": "plain_text",
-                    "text": "${{ github.workflow }} ${{ steps.status.outputs.message }} ${{ steps.status.outputs.icon }}",
-                    "emoji": true
-                  }
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*Environment*: `${{ inputs.environment }}`\n*Domain*: `${{ inputs.domain }}`\n*Status*: ${{ steps.status.outputs.status }}\n*Workflow*: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\n*Code Changes*: ${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
-                  }
-                }
-              ]
-            }

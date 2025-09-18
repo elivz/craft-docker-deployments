@@ -1,5 +1,5 @@
 services:
-  web: &web-container
+  web-blue: &web-container
     image: {GHCR_REGISTRY}/{GHCR_REPOSITORY}:{BRANCH}
     restart: unless-stopped
     links:
@@ -26,7 +26,21 @@ services:
       timeout: 10s
       start_period: 30s
       retries: 3
-  queue: &queue-container
+    labels:
+      - "deployment.color=blue"
+
+  web-green:
+    <<: *web-container
+    labels:
+      - "deployment.color=green"
+
+  # Legacy web service for backward compatibility
+  web:
+    <<: *web-container
+    profiles:
+      - legacy
+
+  queue-blue: &queue-container
     <<: *web-container
     command: nice -n 10 php craft queue/listen --verbose
     environment:
@@ -40,6 +54,19 @@ services:
           memory: ${QUEUE_MEMORY_RESERVATION:-512M}
     healthcheck:
       test: php craft queue/info
+    labels:
+      - "deployment.color=blue"
+
+  queue-green:
+    <<: *queue-container
+    labels:
+      - "deployment.color=green"
+
+  # Legacy queue service for backward compatibility  
+  queue:
+    <<: *queue-container
+    profiles:
+      - legacy
   redis:
     image: redis:7-alpine
     restart: unless-stopped

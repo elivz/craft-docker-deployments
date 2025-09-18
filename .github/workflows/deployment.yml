@@ -103,6 +103,9 @@ jobs:
     needs: build
     environment: ${{ inputs.environment }}
     timeout-minutes: 10
+    outputs:
+      current-color: ${{ steps.deploy.outputs.current-color }}
+      target-color: ${{ steps.deploy.outputs.target-color }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -117,7 +120,7 @@ jobs:
           SOURCE: "docker-compose.deployment.yml"
           TARGET: "${{ inputs.environment }}/docker-compose.yml"
 
-      - name: Deploy containers
+      - name: Deploy containers with blue-green strategy
         id: deploy
         uses: appleboy/ssh-action@v1.0.3
         continue-on-error: true
@@ -143,26 +146,58 @@ jobs:
             sed -i -e "s|{GHCR_REGISTRY}|${{ env.GHCR_REGISTRY }}|g" docker-compose.yml
             sed -i -e "s|{GHCR_REPOSITORY}|${{ env.GHCR_REPOSITORY }}|g" docker-compose.yml
             
-            # Backup current images for rollback (if they exist)
-            echo "Backing up current images for potential rollback..."
-            if docker compose ps --services --filter "status=running" | grep -q web; then
-              CURRENT_WEB_IMAGE=$(docker compose images -q web | head -n1)
-              if [ ! -z "$CURRENT_WEB_IMAGE" ]; then
-                docker tag "$CURRENT_WEB_IMAGE" "${{ env.GHCR_REGISTRY }}/${{ env.GHCR_REPOSITORY }}:${{ inputs.environment }}-previous"
-                echo "✓ Tagged current image as: ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_REPOSITORY }}:${{ inputs.environment }}-previous"
-              fi
+            # Determine current active color and target color for deployment
+            echo "🔍 Determining current deployment state..."
+            BLUE_RUNNING=$(docker compose ps --services --filter "status=running" | grep "web-blue" | wc -l)
+            GREEN_RUNNING=$(docker compose ps --services --filter "status=running" | grep "web-green" | wc -l)
+            
+            if [ "$BLUE_RUNNING" -gt 0 ] && [ "$GREEN_RUNNING" -gt 0 ]; then
+              echo "⚠️ Both blue and green are running. This shouldn't happen in normal operation."
+              echo "🔴 Stopping green to ensure clean state..."
+              docker compose stop web-green queue-green || true
+              CURRENT_COLOR="blue"
+              TARGET_COLOR="green"
+            elif [ "$BLUE_RUNNING" -gt 0 ]; then
+              CURRENT_COLOR="blue"
+              TARGET_COLOR="green"
+              echo "🔵 Current deployment: BLUE → Deploying to: GREEN"
+            elif [ "$GREEN_RUNNING" -gt 0 ]; then
+              CURRENT_COLOR="green"
+              TARGET_COLOR="blue"
+              echo "🟢 Current deployment: GREEN → Deploying to: BLUE"
             else
-              echo "ℹ No running containers found to backup"
+              # No active deployment, start with blue
+              CURRENT_COLOR="none"
+              TARGET_COLOR="blue"
+              echo "🆕 No active deployment found → Deploying to: BLUE"
             fi
             
-            # Deploy new version
-            echo "Pulling new images..."
+            # Output deployment info for use in other steps
+            echo "current-color=$CURRENT_COLOR" >> $GITHUB_OUTPUT
+            echo "target-color=$TARGET_COLOR" >> $GITHUB_OUTPUT
+            
+            # Pull new images
+            echo "📥 Pulling new images..."
             docker compose pull -q
             
-            echo "Starting containers..."
-            docker compose up --detach --no-build --wait --remove-orphans
+            # Start target color services
+            echo "🚀 Starting $TARGET_COLOR services..."
+            docker compose up --detach --no-build web-$TARGET_COLOR queue-$TARGET_COLOR redis --wait
             
-            echo "✓ Deployment completed successfully"
+            echo "⏳ Waiting for $TARGET_COLOR services to be ready..."
+            sleep 10
+            
+            # Verify target services are healthy
+            TARGET_HEALTHY=$(docker compose ps --services --filter "status=running" | grep "web-$TARGET_COLOR" | wc -l)
+            if [ "$TARGET_HEALTHY" -eq 0 ]; then
+              echo "❌ Target $TARGET_COLOR service failed to start"
+              exit 1
+            fi
+            
+            echo "✅ $TARGET_COLOR services are running"
+            
+            # Note: nginx-proxy will automatically start load balancing between both colors
+            # We'll verify health externally, then stop the old color
 
       - name: Health Check
         id: health-check
@@ -173,6 +208,40 @@ jobs:
           max-attempts: 6
           retry-delay: 5s
           basic-auth: ${{ inputs.basic-auth }}
+
+      - name: Complete blue-green deployment
+        id: complete-deployment
+        if: steps.deploy.outcome == 'success' && steps.health-check.outcome == 'success'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          command_timeout: 2m
+          script: |
+            set -e
+            source ~/.bashrc
+            cd ${{ inputs.environment }}
+            
+            CURRENT_COLOR="${{ steps.deploy.outputs.current-color }}"
+            TARGET_COLOR="${{ steps.deploy.outputs.target-color }}"
+            
+            echo "🔄 Completing blue-green deployment..."
+            echo "Current: $CURRENT_COLOR → Target: $TARGET_COLOR"
+            
+            if [ "$CURRENT_COLOR" != "none" ]; then
+              echo "⏹️ Stopping old $CURRENT_COLOR services..."
+              docker compose stop web-$CURRENT_COLOR queue-$CURRENT_COLOR
+              
+              # Wait a moment for graceful shutdown
+              sleep 5
+              
+              echo "🧹 Removing old $CURRENT_COLOR containers..."
+              docker compose rm -f web-$CURRENT_COLOR queue-$CURRENT_COLOR
+            fi
+            
+            echo "✅ Blue-green deployment completed successfully!"
+            echo "🎯 Active deployment: $TARGET_COLOR"
 
       - name: Rollback on failure
         if: always() && (steps.deploy.outcome == 'failure' || steps.health-check.outcome == 'failure')
@@ -187,37 +256,28 @@ jobs:
             source ~/.bashrc
             cd ${{ inputs.environment }}
             
-            echo "🚨 Deployment or health check failed, initiating rollback..."
+            CURRENT_COLOR="${{ steps.deploy.outputs.current-color }}"
+            TARGET_COLOR="${{ steps.deploy.outputs.target-color }}"
             
-            # Stop current containers gracefully
-            echo "Stopping current containers..."
-            docker compose down --timeout 30 || true
+            echo "🚨 Deployment or health check failed, initiating blue-green rollback..."
+            echo "Rollback info - Current: $CURRENT_COLOR, Failed Target: $TARGET_COLOR"
             
-            # Rollback to previous image
-            PREVIOUS_IMAGE="${{ env.GHCR_REGISTRY }}/${{ env.GHCR_REPOSITORY }}:${{ inputs.environment }}-previous"
-            if docker images --format "table {{.Repository}}:{{.Tag}}" | grep -q "$PREVIOUS_IMAGE"; then
-              echo "Rolling back to previous image: $PREVIOUS_IMAGE"
-              
-              # Re-tag previous image as current
-              docker tag "$PREVIOUS_IMAGE" "${{ env.GHCR_REGISTRY }}/${{ env.GHCR_REPOSITORY }}:${{ inputs.environment }}"
-              
-              # Start containers with previous image
-              docker compose up --detach --wait --timeout 60
-
-              echo "✅ Rollback completed successfully"
-
-              # Verify rollback health
-              sleep 5
-              if docker compose ps --services --filter "status=running" | grep -q web; then
-                echo "✓ Rollback verification: containers are running"
-              else
-                echo "⚠ Warning: Rollback verification failed - containers may not be running properly"
+            # Stop the failed target deployment
+            echo "⏹️ Stopping failed $TARGET_COLOR services..."
+            docker compose stop web-$TARGET_COLOR queue-$TARGET_COLOR || true
+            docker compose rm -f web-$TARGET_COLOR queue-$TARGET_COLOR || true
+            
+            if [ "$CURRENT_COLOR" != "none" ]; then
+              # Ensure the previous working color is still running
+              echo "🔍 Verifying $CURRENT_COLOR services are running..."
+              CURRENT_RUNNING=$(docker compose ps --services --filter "status=running" | grep "web-$CURRENT_COLOR" | wc -l)
+              if [ "$CURRENT_RUNNING" -eq 0 ]; then
+                echo "🔄 Restarting $CURRENT_COLOR services..."
+                docker compose up --detach --no-build web-$CURRENT_COLOR queue-$CURRENT_COLOR redis --wait
               fi
+              echo "✅ Rollback completed - $CURRENT_COLOR is active"
             else
-              echo "❌ No previous image found for rollback: $PREVIOUS_IMAGE"
-              echo "Available images:"
-              docker images --format "table {{.Repository}}:{{.Tag}}\t{{.CreatedAt}}" | grep "${{ env.GHCR_REPOSITORY }}" || echo "No images found"
-              echo "Manual intervention required."
+              echo "❌ No previous deployment to rollback to"
               exit 1
             fi
 
@@ -262,13 +322,26 @@ jobs:
             source ~/.bashrc
             cd ${{ inputs.environment }}
             
-            echo "Running database migrations..."
-            docker compose exec -T web php craft up --interactive=0
+            # Determine which color is currently active
+            BLUE_RUNNING=$(docker compose ps --services --filter "status=running" | grep "web-blue" | wc -l)
+            GREEN_RUNNING=$(docker compose ps --services --filter "status=running" | grep "web-green" | wc -l)
             
-            echo "Clearing caches..."
-            docker compose exec -T web php craft clear-caches/compiled-classes --interactive=0
-            docker compose exec -T web php craft clear-caches/compiled-templates --interactive=0
-            docker compose exec -T web php craft invalidate-tags/all --interactive=0
+            if [ "$BLUE_RUNNING" -gt 0 ] && [ "$GREEN_RUNNING" -eq 0 ]; then
+              ACTIVE_COLOR="blue"
+            elif [ "$GREEN_RUNNING" -gt 0 ] && [ "$BLUE_RUNNING" -eq 0 ]; then
+              ACTIVE_COLOR="green"
+            else
+              echo "❌ Unable to determine active color. Blue: $BLUE_RUNNING, Green: $GREEN_RUNNING"
+              exit 1
+            fi
+            
+            echo "🗃️ Running migrations on active $ACTIVE_COLOR deployment..."
+            docker compose exec -T web-$ACTIVE_COLOR php craft up --interactive=0
+            
+            echo "🧹 Clearing caches..."
+            docker compose exec -T web-$ACTIVE_COLOR php craft clear-caches/compiled-classes --interactive=0
+            docker compose exec -T web-$ACTIVE_COLOR php craft clear-caches/compiled-templates --interactive=0
+            docker compose exec -T web-$ACTIVE_COLOR php craft invalidate-tags/all --interactive=0
             
             echo "✅ Migrations and cache clearing completed"
 

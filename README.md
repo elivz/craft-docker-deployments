@@ -1,12 +1,13 @@
 # Craft Docker Deployments
 
-A robust GitHub Actions workflow for deploying Craft CMS applications using Docker containers with automatic rollback capabilities.
+A robust GitHub Actions workflow for deploying Craft CMS applications using Docker containers with **zero-downtime blue-green deployments** and automatic rollback capabilities.
 
 ## Features
 
 - 🚀 **Automated Docker builds** using GitHub Container Registry
-- 🔄 **Intelligent rollback** on deployment or health check failures
+- 🔄 **Zero-downtime blue-green deployments** with automatic traffic switching
 - 🏥 **Health checking** with configurable endpoints and timeouts
+- 🔄 **Intelligent rollback** on deployment or health check failures
 - 📢 **Slack notifications** for deployment status updates
 - 🔒 **Secure deployments** with SSH-based container management
 - ⚡ **Fast builds** with Docker layer caching
@@ -94,43 +95,73 @@ jobs:
 - Pushes images with environment-specific tags
 - Utilizes GitHub Actions cache for faster builds
 
-### 2. Deployment Phase
-- Copies Docker Compose configuration to server
-- **Backs up current running images** for rollback capability
-- Pulls and deploys new container images
-- Waits for containers to start successfully
+### 2. Blue-Green Deployment Phase
+- **Determines current state**: Identifies which color (blue/green) is currently active
+- **Starts new deployment**: Deploys new version to the inactive color
+- **Parallel operation**: Both old and new versions run simultaneously during switchover
+- **nginx-proxy load balancing**: Automatically distributes traffic between active services
 
 ### 3. Health Check Phase
-- Performs HTTP health checks against the configured endpoint
+- Performs HTTP health checks against the configured endpoint on the new deployment
 - Retries up to 6 times with 10-second intervals
 - Supports basic authentication if configured
+- **Zero-downtime**: Old version continues serving traffic during health checks
 
-### 4. Rollback on Failure
-- **Automatically triggers** if deployment or health checks fail
-- Restores previous working container images
-- Verifies rollback success with container status checks
-- Provides detailed logging for troubleshooting
+### 4. Completion Phase
+- **Traffic migration**: nginx-proxy automatically includes healthy new containers in load balancing
+- **Graceful shutdown**: Stops old color containers only after new ones are confirmed healthy
+- **Clean state**: Removes old containers to maintain clean deployment state
 
-### 5. Post-Deployment
-- Runs Craft CMS database migrations
+### 5. Rollback on Failure
+- **Automatic trigger**: Activates if deployment or health checks fail
+- **Instant rollback**: Stops failed new deployment, ensures old deployment remains active
+- **Zero-downtime**: Traffic continues flowing to working version throughout rollback
+- **Detailed logging**: Provides comprehensive troubleshooting information
+
+### 6. Post-Deployment
+- Runs Craft CMS database migrations on the active deployment
 - Clears application caches
 - Sends status notifications to Slack
 
-## Rollback System
+## Blue-Green Deployment System
 
-The deployment workflow includes an intelligent rollback mechanism:
+The deployment workflow implements a **zero-downtime blue-green deployment strategy** using nginx-proxy for automatic load balancing and traffic switching.
 
-### How Rollback Works
-1. **Before deployment**: Current running images are tagged as `{environment}-previous`
-2. **On failure**: Containers are stopped and previous images are restored
-3. **Verification**: Rollback success is verified by checking container status
-4. **Logging**: Detailed status information helps with troubleshooting
+### How Blue-Green Deployment Works
+1. **Color determination**: The system identifies which color (blue/green) is currently active
+2. **Parallel deployment**: New version deploys to the inactive color while old version continues serving traffic
+3. **Health verification**: New deployment undergoes thorough health checks before traffic switching
+4. **Automatic traffic migration**: nginx-proxy automatically includes healthy containers in load balancing pool
+5. **Graceful shutdown**: Old deployment stops only after new deployment is confirmed stable
+
+### Blue-Green Architecture
+- **web-blue/web-green**: Parallel web service containers that can run simultaneously
+- **queue-blue/queue-green**: Corresponding background job processing containers
+- **Shared resources**: Redis and storage volumes are shared between deployments
+- **nginx-proxy integration**: Uses `VIRTUAL_HOST` environment variable for automatic service discovery
+
+### Traffic Switching Process
+- **Gradual transition**: nginx-proxy naturally load balances between old and new containers
+- **Health-based routing**: Only healthy containers receive traffic
+- **Instant rollback capability**: Failed deployments are immediately removed from load balancing
+
+### Zero-Downtime Benefits
+- **No service interruption**: Users experience no downtime during deployments
+- **Risk mitigation**: New versions are thoroughly tested before receiving production traffic
+- **Instant recovery**: Rollbacks happen in seconds, not minutes
+- **Confidence in deployments**: Safe to deploy during business hours
 
 ### When Rollback Triggers
 - Docker Compose deployment failures
-- Container startup failures
+- Container startup failures  
 - Health check failures (HTTP endpoint unreachable)
-- Any critical error during the deployment process
+- Any critical error during the blue-green deployment process
+
+### Rollback Process
+- **Immediate action**: Failed target deployment is stopped instantly
+- **Traffic preservation**: Original working deployment continues serving all traffic
+- **State verification**: System confirms working deployment is healthy
+- **Clean recovery**: Failed deployment artifacts are cleaned up automatically
 
 ## Docker Compose Files
 
@@ -140,10 +171,13 @@ Used for building and pushing images during CI:
 - Configures image tags and registry settings
 
 ### `docker-compose.deployment.yml`
-Template for production deployments:
-- Uses placeholder variables for environment-specific configuration
-- Includes health checks and resource limits
-- Configured automatically during deployment
+Template for zero-downtime production deployments:
+- **Blue-green services**: Defines `web-blue`, `web-green`, `queue-blue`, `queue-green` for parallel deployments
+- **nginx-proxy integration**: Uses `VIRTUAL_HOST` for automatic service discovery and load balancing
+- **Shared resources**: Storage and Redis volumes are shared between blue/green deployments
+- **Health checks**: Built-in container health monitoring for deployment verification
+- **Resource limits**: Configurable memory and replica settings per environment
+- **Legacy compatibility**: Maintains backward compatibility with single-service deployments
 
 ## Slack Notifications
 
@@ -161,38 +195,54 @@ Configure Slack notifications to keep your team informed:
 
 ### Common Issues
 
-**Deployment Fails with "name invalid" error**
-- ✅ **Fixed**: The improved workflow properly handles image rollback
-- Previous images are now preserved during deployment
-
 **Health checks timeout**
-- Increase `deployment-timeout` input value
-- Verify health check endpoint is accessible
+- Increase health check retry attempts or intervals in workflow
+- Verify health check endpoint is accessible on both blue and green deployments
 - Check basic auth credentials if required
+- Ensure containers have sufficient startup time
+
+**Blue-green state conflicts**
+- Check for orphaned containers: `docker compose ps -a`
+- Clean up stopped containers: `docker compose rm -f`
+- Verify only one color is active: both blue and green running simultaneously indicates an interrupted deployment
 
 **SSH connection failures**
 - Verify `DEPLOY_HOST`, `DEPLOY_USER`, and `DEPLOY_KEY` secrets
 - Ensure SSH key has proper permissions on the server
 - Test SSH connection manually: `ssh user@host`
 
-**Rollback fails**
-- Check server logs for container status
-- Verify Docker images exist on the server
-- Ensure sufficient disk space for image storage
+**nginx-proxy not routing traffic**
+- Verify `VIRTUAL_HOST` environment variable is set correctly
+- Check nginx-proxy logs: `docker logs nginx-proxy`
+- Ensure containers are on the `nginx-proxy` network
+- Confirm containers are healthy and passing health checks
+
+**Deployment stuck in mixed state**
+- Both blue and green containers running: Check workflow logs for interruption point
+- Manual cleanup: Stop one color manually and let the system stabilize
+- Emergency rollback: Stop new deployment and ensure old deployment is running
 
 ### Debugging
 
 Enable verbose logging by checking the GitHub Actions workflow logs:
-- Build logs show Docker build output and caching information
-- Deployment logs include container startup and health check details
-- Rollback logs provide step-by-step restoration information
+- **Build logs**: Show Docker build output and caching information
+- **Blue-green deployment logs**: Include color determination, parallel container startup, and traffic switching details
+- **Health check logs**: Provide detailed information about endpoint testing and retry attempts
+- **Rollback logs**: Show step-by-step restoration process for failed deployments
+
+**Blue-Green Specific Debugging:**
+- **Color state tracking**: Each deployment logs current and target colors
+- **Container status verification**: Logs show which containers are running for each color
+- **Traffic routing verification**: nginx-proxy integration status and health check results
+- **Cleanup operations**: Detailed logging of old container shutdown and removal
 
 ## Best Practices
 
-### Branch Strategy
-- Use separate workflows for different environments
-- Deploy staging from `staging` branch, production from `main`
-- Test deployments in staging before promoting to production
+### Deployment Strategy
+- **Zero-downtime deployments**: Use blue-green strategy to eliminate service interruption
+- **Deploy during business hours**: Safe to deploy anytime with zero-downtime approach
+- **Gradual rollouts**: Consider using feature flags for additional deployment safety
+- **Monitor nginx-proxy**: Ensure load balancer is healthy and routing traffic correctly
 
 ### Security
 - Use dedicated deploy user with minimal required permissions

@@ -1,9 +1,11 @@
 name: Deploy to Staging
 
+# Prevent multiple concurrent deployments to the same environment.
 concurrency:
   group: staging
   cancel-in-progress: true
 
+# Trigger the workflow on push to the branch or by manual dispatch.
 on:
   workflow_dispatch:
   push:
@@ -15,6 +17,7 @@ permissions:
   packages: write
   contents: read
 
+# Call our reusable deployment workflow.
 jobs:
   call-deployment:
     uses: ./.github/workflows/deployment.yml

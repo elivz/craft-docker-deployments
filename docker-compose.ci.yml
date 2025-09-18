@@ -1,6 +1,5 @@
-# A docker-compose file that contains services to be built and pushed as part of a CI deploy process
+# A docker compose file that is used by the CI deploy process to build production images.
 services:
-  # The php/nginx service that is built and pushed to GitHub Container Registry and serves as the basis for our php container on remote environments
   web:
     image: "${GHCR_REGISTRY:-ghcr.io}/${GHCR_REPOSITORY:-web}:${BRANCH:-dev}"
     build:

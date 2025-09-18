@@ -6,9 +6,9 @@ ARG NODE_VERSION=jod
 FROM serversideup/php:${PHP_VERSION}-fpm-nginx AS base
 
 # PHP memory/execution settings
-ENV PHP_MEMORY_LIMIT="1024M"
-ENV PHP_UPLOAD_MAX_FILE_SIZE="100M"
-ENV PHP_POST_MAX_SIZE="100M"
+ENV PHP_MEMORY_LIMIT=1024M
+ENV PHP_UPLOAD_MAX_FILE_SIZE=100M
+ENV PHP_POST_MAX_SIZE=100M
 ENV PHP_MAX_INPUT_VARS=5000
 
 # PHP opcache settings
@@ -20,7 +20,7 @@ ENV PHP_OPCACHE_MEMORY_CONSUMPTION=256
 # Custom from ini
 ENV PHP_OPCACHE_MAX_WASTED_PERCENTAGE=10
 ENV PHP_OPCACHE_VALIDATE_TIMESTAMPS=1
-ENV PHP_OPCACHE_JIT="tracing"
+ENV PHP_OPCACHE_JIT=tracing
 ENV PHP_OPCACHE_JIT_BUFFER_SIZE=100M
 
 # Install necessary server packages and PHP extensions
@@ -46,14 +46,13 @@ RUN npm run build
 
 # For all non-dev environments, install our Composer dependencies
 FROM base AS vendor
-#COPY ./modules ./modules
+COPY ./modules ./modules
 COPY composer.json composer.lock ./
 RUN composer install --no-interaction --prefer-dist --no-ansi --no-scripts --no-progress --no-dev --optimize-autoloader -d /var/www/html/
 
 
 # Our app stage serves as the foundation for our deploy environments
-# and will copy in front-end assets and Composer dependencies, then copy
-# the rest of our project in, and run as www-data
+# and will copy in FE assets, Composer dependencies, and project code
 FROM base AS app
 ENV PHP_OPCACHE_VALIDATE_TIMESTAMPS=0
 COPY --chown=www-data:www-data ./config ./config

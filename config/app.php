@@ -24,4 +24,23 @@ use craft\helpers\App;
 
 return [
     'id' => App::env('CRAFT_APP_ID') ?: 'CraftCMS',
+
+    'components' => [
+        'cache' => function () {
+            $config = [
+                'class' => yii\redis\Cache::class,
+                'keyPrefix' => Craft::$app->id,
+                'defaultDuration' => Craft::$app->config->general->cacheDuration,
+
+                // Full Redis connection details:
+                'redis' => [
+                    'hostname' => App::env('REDIS_HOSTNAME') ?: 'redis',
+                    'port' => 6379,
+                    'password' => App::env('REDIS_PASSWORD') ?: null,
+                ],
+            ];
+
+            return Craft::createObject($config);
+        },
+    ],
 ];

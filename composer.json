@@ -4,7 +4,8 @@
   "require": {
     "craftcms/cms": "^5.0.0",
     "nystudio107/craft-vite": "5.0.1",
-    "vlucas/phpdotenv": "^5.4.0"
+    "vlucas/phpdotenv": "^5.4.0",
+    "yiisoft/yii2-redis": "^2.0"
   },
   "require-dev": {
     "craftcms/generator": "^2.0.0",

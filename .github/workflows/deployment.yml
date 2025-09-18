@@ -28,8 +28,14 @@ jobs:
     environment: ${{ inputs.environment }}
     outputs:
       slack-ts: ${{ steps.slack.outputs.ts }}
-      image-digest: ${{ steps.build.outputs.digest }}
     steps:
+      - name: Validate required secrets
+        run: |
+          if [ -z "${{ secrets.DEPLOY_HOST }}" ] || [ -z "${{ secrets.DEPLOY_USER }}" ] || [ -z "${{ secrets.DEPLOY_KEY }}" ]; then
+            echo "Error: Missing required deployment secrets (DEPLOY_HOST, DEPLOY_USER, DEPLOY_KEY)"
+            exit 1
+          fi
+
       - name: Send started notification to Slack
         uses: slackapi/slack-github-action@v1.26.0
         if: ${{ vars.SLACK_WEBHOOK_URL != '' && vars.SLACK_CHANNEL_ID != '' }}
@@ -100,13 +106,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Validate required secrets
-        run: |
-          if [ -z "${{ secrets.DEPLOY_HOST }}" ] || [ -z "${{ secrets.DEPLOY_USER }}" ] || [ -z "${{ secrets.DEPLOY_KEY }}" ]; then
-            echo "Error: Missing required deployment secrets (DEPLOY_HOST, DEPLOY_USER, DEPLOY_KEY)"
-            exit 1
-          fi
 
       - name: Copy Docker configuration
         uses: easingthemes/ssh-deploy@main
@@ -229,7 +228,7 @@ jobs:
           exit 1
           
 
-  # Job 3: Cleanup old images
+  # Job 3: Clean up old images
   cleanup-images:
     name: Cleanup old images
     runs-on: ubuntu-latest

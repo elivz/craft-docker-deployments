@@ -20,8 +20,10 @@ services:
 
   redis:
     image: redis:8-alpine
-    command: redis-server --requirepass redispw
+    command: redis-server --requirepass redispw --save 60 1 --loglevel warning
     restart: always
+    volumes:
+      - redis_data:/data
 
   db:
     image: mysql:8.0
@@ -38,4 +40,5 @@ services:
       - "3308:3306"
 
 volumes:
+  redis_data:
   db_data:

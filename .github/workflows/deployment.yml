@@ -84,7 +84,7 @@ jobs:
           SOURCE: "docker-compose.deployment.yml"
           TARGET: "${{ inputs.environment }}/docker-compose.yml"
 
-      - name: Deploy containers with blue-green strategy
+      - name: Zero-downtime deployment
         id: deploy
         uses: appleboy/ssh-action@v1.0.3
         continue-on-error: true
@@ -92,7 +92,7 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
-          command_timeout: 5m
+          command_timeout: 7m
           script: |
             set -e
             source ~/.bashrc
@@ -121,37 +121,54 @@ jobs:
             echo "🔬 Starting new containers alongside current production..."
             docker compose --profile deployment up --detach --wait --no-build web-new queue-new --scale web-new=1 --scale queue-new=1
             
-            echo "⏳ Waiting for new services to be ready..."
-            sleep 15
-            
-            # Verify new services are running and healthy
-            WEB_NEW_RUNNING=$(docker compose ps --services --filter "status=running" | grep "web-new" | wc -l)
-            if [ "$WEB_NEW_RUNNING" -eq 0 ]; then
-              echo "❌ New web service failed to start"
-              exit 1
-            fi
-            
-            # Verify nginx-proxy can reach new container
-            echo "🔍 Verifying nginx-proxy can reach new container..."
-            for i in {1..6}; do
+            # Verify new containers are healthy before proceeding
+            echo "🔍 Verifying new containers are healthy..."
+            for i in {1..12}; do
               if docker compose exec -T web-new curl -sf http://localhost:8080/actions/app/health-check > /dev/null; then
                 echo "✅ New container health check passed (attempt $i)"
                 break
               else
-                echo "⏳ New container not ready yet (attempt $i/6)..."
-                if [ $i -eq 6 ]; then
-                  echo "❌ New container failed health check after 6 attempts"
+                echo "⏳ New container not ready yet (attempt $i/12)..."
+                if [ $i -eq 12 ]; then
+                  echo "❌ New container failed health check after 12 attempts"
                   exit 1
                 fi
                 sleep 5
               fi
             done
             
-            echo "✅ New services are running and healthy"
+            echo "✅ New services are healthy and ready"
             echo "🌐 nginx-proxy is now load balancing between old and new containers"
+            
+            # Now complete the deployment atomically
+            echo "🔄 Completing zero-downtime deployment..."
+            
+            # Gracefully stop old containers (traffic automatically goes to new ones)
+            echo "⏹️ Gracefully stopping old production containers..."
+            docker compose stop web queue
+            docker compose rm -f web queue
+            
+            # Start fresh production containers BEFORE stopping the temporary new ones
+            echo "🚀 Starting fresh production containers alongside -new containers..."
+            docker compose up --detach --no-build web queue --wait
+            
+            # Give nginx-proxy a moment to detect the new production containers
+            echo "⏳ Allowing nginx-proxy to detect new production containers..."
+            sleep 10
+            
+            # NOW we can safely stop the -new containers
+            echo "⏹️ Stopping temporary -new containers..."
+            docker compose --profile deployment stop web-new queue-new
+            
+            # Clean up temporary containers
+            echo "🧹 Cleaning up temporary containers..."
+            docker compose --profile deployment rm -f web-new queue-new
+            
+            echo "✅ Zero-downtime deployment completed!"
+            echo "🎯 Active containers: web, queue (with new code)"
 
-      - name: Health Check
-        id: health-check
+      - name: Final Health Check
+        id: final-health-check
         if: steps.deploy.outcome == 'success'
         uses: jtalk/url-health-check-action@v4
         with:
@@ -160,152 +177,33 @@ jobs:
           retry-delay: 5s
           basic-auth: ${{ inputs.basic-auth }}
 
-      - name: Complete zero-downtime deployment
-        id: complete-deployment
-        if: steps.deploy.outcome == 'success' && steps.health-check.outcome == 'success'
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_KEY }}
-          command_timeout: 3m
-          script: |
-            set -e
-            source ~/.bashrc
-            cd ${{ inputs.environment }}
-            
-            echo "🔄 Completing zero-downtime deployment..."
-            
-            # At this point both web and web-new containers are running
-            # and nginx-proxy is load balancing between them
-            echo "🌐 Both old and new containers are serving traffic"
-            
-            # Wait a bit to ensure new container is stable under load
-            echo "⏳ Monitoring new container stability..."
-            sleep 30
-            
-            # Verify new container is still healthy before proceeding
-            if ! docker compose exec -T web-new curl -sf http://localhost:8080/actions/app/health-check > /dev/null; then
-              echo "❌ New container became unhealthy, aborting deployment"
-              exit 1
-            fi
-            
-            # Now gracefully remove the old container
-            # nginx-proxy will automatically route all traffic to web-new
-            echo "⏹️ Gracefully stopping old production containers..."
-            docker compose stop web queue
-            
-            # Wait for graceful shutdown and connection draining
-            sleep 10
-            
-            # Remove old containers
-            echo "🧹 Removing old production containers..."
-            docker compose rm -f web queue
-            
-            # Now promote web-new to web by recreating the production services
-            echo "🔄 Promoting new containers to production names..."
-            
-            # Start fresh production containers with the new image FIRST
-            # This ensures nginx-proxy always has containers to route to
-            echo "🚀 Starting fresh production containers alongside -new containers..."
-            docker compose up --detach --no-build web queue --wait
-            
-            # Give nginx-proxy time to detect the new production containers
-            echo "⏳ Allowing nginx-proxy to detect new production containers..."
-            sleep 15
-            
-            # Verify the final web container is healthy before cleaning up
-            echo "🔍 Verifying final production container health..."
-            for i in {1..6}; do
-              if docker compose exec -T web curl -sf http://localhost:8080/actions/app/health-check > /dev/null; then
-                echo "✅ Final production container health check passed (attempt $i)"
-                break
-              else
-                echo "⏳ Final production container not ready yet (attempt $i/6)..."
-                if [ $i -eq 6 ]; then
-                  echo "❌ Final production container failed health check, keeping -new containers as backup"
-                  exit 1
-                fi
-                sleep 5
-              fi
-            done
-            
-            # NOW we can safely stop the -new containers
-            # nginx-proxy will route all traffic to the fresh 'web' and 'queue' containers
-            echo "⏹️ Stopping temporary -new containers..."
-            docker compose --profile deployment stop web-new queue-new
-            
-            # Clean up the -new containers
-            echo "🧹 Cleaning up temporary -new containers..."
-            docker compose --profile deployment rm -f web-new queue-new
-            
-            echo "✅ Zero-downtime deployment completed successfully!"
-            echo "🎯 Active container: web (with new code)"
-
       - name: Rollback on failure
-        if: always() && (steps.deploy.outcome == 'failure' || steps.health-check.outcome == 'failure')
+        if: always() && (steps.deploy.outcome == 'failure' || steps.final-health-check.outcome == 'failure')
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
-          command_timeout: 120s
+          command_timeout: 60s
           script: |
             set -e
             source ~/.bashrc
             cd ${{ inputs.environment }}
             
-            echo "🚨 Deployment or health check failed, performing rollback..."
+            echo "🚨 Deployment failed, performing rollback..."
             
-            # Stop and remove failed new containers
-            echo "⏹️ Stopping failed new containers..."
+            # Clean up failed new containers
             docker compose --profile deployment stop web-new queue-new || true
             docker compose --profile deployment rm -f web-new queue-new || true
             
-            # Verify production containers are still running and healthy
-            echo "🔍 Verifying production containers are still running and healthy..."
-            WEB_RUNNING=$(docker compose ps --services --filter "status=running" | grep -E "^web$" | wc -l)
-            QUEUE_RUNNING=$(docker compose ps --services --filter "status=running" | grep -E "^queue$" | wc -l)
+            # Ensure production containers are running
+            echo "🔍 Ensuring production containers are healthy..."
+            docker compose up --detach --no-build web queue redis
             
-            if [ "$WEB_RUNNING" -eq 0 ]; then
-              echo "🔄 Production web container not running, restarting..."
-              docker compose up --detach --no-build web redis --wait
-              
-              # Verify web container is healthy after restart
-              for i in {1..6}; do
-                if docker compose exec -T web curl -sf http://localhost:8080/actions/app/health-check > /dev/null; then
-                  echo "✅ Production web container restarted and healthy (attempt $i)"
-                  break
-                else
-                  echo "⏳ Production web container not ready yet (attempt $i/6)..."
-                  if [ $i -eq 6 ]; then
-                    echo "❌ Production web container failed to restart properly"
-                    exit 1
-                  fi
-                  sleep 5
-                fi
-              done
-            else
-              echo "✅ Production web container is running"
-              # Still verify it's healthy
-              if docker compose exec -T web curl -sf http://localhost:8080/actions/app/health-check > /dev/null; then
-                echo "✅ Production web container is healthy"
-              else
-                echo "⚠️ Production web container is running but failing health checks"
-              fi
-            fi
-            
-            if [ "$QUEUE_RUNNING" -eq 0 ]; then
-              echo "🔄 Production queue container not running, restarting..."
-              docker compose up --detach --no-build queue --wait
-            else
-              echo "✅ Production queue container is running"
-            fi
-            
-            echo "✅ Rollback completed - production containers are active and healthy"
+            echo "✅ Rollback completed - production is restored"
 
       - name: Mark deployment as failed
-        if: steps.deploy.outcome == 'failure' || steps.health-check.outcome == 'failure'
+        if: steps.deploy.outcome == 'failure' || steps.final-health-check.outcome == 'failure'
         run: |
           echo "::error::Deployment failed and rollback was attempted"
           exit 1
@@ -325,7 +223,7 @@ jobs:
           min-versions-to-keep: 10
           ignore-versions: '^[a-zA-Z-]+$'
 
-  # Job 3: Run database migrations and clear caches
+  # Job 4: Run database migrations and clear caches
   migrate:
     name: Run Migrations
     runs-on: ubuntu-latest

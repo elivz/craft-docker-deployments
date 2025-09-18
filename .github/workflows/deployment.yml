@@ -119,7 +119,7 @@ jobs:
             # Start new containers alongside existing production
             # Both will have the same VIRTUAL_HOST, so nginx-proxy will load balance
             echo "🔬 Starting new containers alongside current production..."
-            docker compose --profile deployment up --detach --no-build web-new queue-new --wait
+            docker compose --profile deployment up --detach --wait --no-build web-new queue-new --scale web-new=1 --scale queue-new=1
             
             echo "⏳ Waiting for new services to be ready..."
             sleep 15

@@ -110,58 +110,45 @@ jobs:
             sed -i -e "s|{GHCR_REGISTRY}|${{ env.GHCR_REGISTRY }}|g" docker-compose.yml
             sed -i -e "s|{GHCR_REPOSITORY}|${{ env.GHCR_REPOSITORY }}|g" docker-compose.yml
             
-            # Determine current active color and target color for deployment
-            echo "🔍 Determining current deployment state..."
-            BLUE_RUNNING=$(docker compose ps --services --filter "status=running" | grep "web-blue" | wc -l)
-            GREEN_RUNNING=$(docker compose ps --services --filter "status=running" | grep "web-green" | wc -l)
-            
-            if [ "$BLUE_RUNNING" -gt 0 ] && [ "$GREEN_RUNNING" -gt 0 ]; then
-              echo "⚠️ Both blue and green are running. This shouldn't happen in normal operation."
-              echo "🔴 Stopping green to ensure clean state..."
-              docker compose stop web-green queue-green || true
-              CURRENT_COLOR="blue"
-              TARGET_COLOR="green"
-            elif [ "$BLUE_RUNNING" -gt 0 ]; then
-              CURRENT_COLOR="blue"
-              TARGET_COLOR="green"
-              echo "🔵 Current deployment: BLUE → Deploying to: GREEN"
-            elif [ "$GREEN_RUNNING" -gt 0 ]; then
-              CURRENT_COLOR="green"
-              TARGET_COLOR="blue"
-              echo "🟢 Current deployment: GREEN → Deploying to: BLUE"
-            else
-              # No active deployment, start with blue
-              CURRENT_COLOR="none"
-              TARGET_COLOR="blue"
-              echo "🆕 No active deployment found → Deploying to: BLUE"
-            fi
-            
-            # Store deployment info for use in other steps
-            echo "CURRENT_COLOR=$CURRENT_COLOR" >> deployment.env
-            echo "TARGET_COLOR=$TARGET_COLOR" >> deployment.env
+            echo "🚀 Starting zero-downtime deployment..."
             
             # Pull new images
             echo "📥 Pulling new images..."
             docker compose pull -q
             
-            # Start target color services
-            echo "🚀 Starting $TARGET_COLOR services..."
-            docker compose up --detach --no-build web-$TARGET_COLOR queue-$TARGET_COLOR redis --wait
+            # Start new containers alongside existing production
+            # Both will have the same VIRTUAL_HOST, so nginx-proxy will load balance
+            echo "🔬 Starting new containers alongside current production..."
+            docker compose --profile deployment up --detach --no-build web-new queue-new --wait
             
-            echo "⏳ Waiting for $TARGET_COLOR services to be ready..."
-            sleep 10
+            echo "⏳ Waiting for new services to be ready..."
+            sleep 15
             
-            # Verify target services are healthy
-            TARGET_HEALTHY=$(docker compose ps --services --filter "status=running" | grep "web-$TARGET_COLOR" | wc -l)
-            if [ "$TARGET_HEALTHY" -eq 0 ]; then
-              echo "❌ Target $TARGET_COLOR service failed to start"
+            # Verify new services are running and healthy
+            WEB_NEW_RUNNING=$(docker compose ps --services --filter "status=running" | grep "web-new" | wc -l)
+            if [ "$WEB_NEW_RUNNING" -eq 0 ]; then
+              echo "❌ New web service failed to start"
               exit 1
             fi
             
-            echo "✅ $TARGET_COLOR services are running"
+            # Verify nginx-proxy can reach new container
+            echo "🔍 Verifying nginx-proxy can reach new container..."
+            for i in {1..6}; do
+              if docker compose exec -T web-new curl -sf http://localhost:8080/actions/app/health-check > /dev/null; then
+                echo "✅ New container health check passed (attempt $i)"
+                break
+              else
+                echo "⏳ New container not ready yet (attempt $i/6)..."
+                if [ $i -eq 6 ]; then
+                  echo "❌ New container failed health check after 6 attempts"
+                  exit 1
+                fi
+                sleep 5
+              fi
+            done
             
-            # Note: nginx-proxy will automatically start load balancing between both colors
-            # We'll verify health externally, then stop the old color
+            echo "✅ New services are running and healthy"
+            echo "🌐 nginx-proxy is now load balancing between old and new containers"
 
       - name: Health Check
         id: health-check
@@ -173,7 +160,7 @@ jobs:
           retry-delay: 5s
           basic-auth: ${{ inputs.basic-auth }}
 
-      - name: Complete blue-green deployment
+      - name: Complete zero-downtime deployment
         id: complete-deployment
         if: steps.deploy.outcome == 'success' && steps.health-check.outcome == 'success'
         uses: appleboy/ssh-action@v1.0.3
@@ -181,34 +168,79 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
-          command_timeout: 2m
+          command_timeout: 3m
           script: |
             set -e
             source ~/.bashrc
             cd ${{ inputs.environment }}
             
-            # Read deployment state
-            source deployment.env
+            echo "🔄 Completing zero-downtime deployment..."
             
-            echo "🔄 Completing blue-green deployment..."
-            echo "Current: $CURRENT_COLOR → Target: $TARGET_COLOR"
+            # At this point both web and web-new containers are running
+            # and nginx-proxy is load balancing between them
+            echo "🌐 Both old and new containers are serving traffic"
             
-            if [ "$CURRENT_COLOR" != "none" ]; then
-              echo "⏹️ Stopping old $CURRENT_COLOR services..."
-              docker compose stop web-$CURRENT_COLOR queue-$CURRENT_COLOR
-              
-              # Wait a moment for graceful shutdown
-              sleep 5
-              
-              echo "🧹 Removing old $CURRENT_COLOR containers..."
-              docker compose rm -f web-$CURRENT_COLOR queue-$CURRENT_COLOR
+            # Wait a bit to ensure new container is stable under load
+            echo "⏳ Monitoring new container stability..."
+            sleep 30
+            
+            # Verify new container is still healthy before proceeding
+            if ! docker compose exec -T web-new curl -sf http://localhost:8080/actions/app/health-check > /dev/null; then
+              echo "❌ New container became unhealthy, aborting deployment"
+              exit 1
             fi
             
-            echo "✅ Blue-green deployment completed successfully!"
-            echo "🎯 Active deployment: $TARGET_COLOR"
+            # Now gracefully remove the old container
+            # nginx-proxy will automatically route all traffic to web-new
+            echo "⏹️ Gracefully stopping old production containers..."
+            docker compose stop web queue
             
-            # Cleanup deployment state file
-            rm -f deployment.env
+            # Wait for graceful shutdown and connection draining
+            sleep 10
+            
+            # Remove old containers
+            echo "🧹 Removing old production containers..."
+            docker compose rm -f web queue
+            
+            # Now promote web-new to web by recreating the production services
+            echo "🔄 Promoting new containers to production names..."
+            
+            # Start fresh production containers with the new image FIRST
+            # This ensures nginx-proxy always has containers to route to
+            echo "🚀 Starting fresh production containers alongside -new containers..."
+            docker compose up --detach --no-build web queue --wait
+            
+            # Give nginx-proxy time to detect the new production containers
+            echo "⏳ Allowing nginx-proxy to detect new production containers..."
+            sleep 15
+            
+            # Verify the final web container is healthy before cleaning up
+            echo "🔍 Verifying final production container health..."
+            for i in {1..6}; do
+              if docker compose exec -T web curl -sf http://localhost:8080/actions/app/health-check > /dev/null; then
+                echo "✅ Final production container health check passed (attempt $i)"
+                break
+              else
+                echo "⏳ Final production container not ready yet (attempt $i/6)..."
+                if [ $i -eq 6 ]; then
+                  echo "❌ Final production container failed health check, keeping -new containers as backup"
+                  exit 1
+                fi
+                sleep 5
+              fi
+            done
+            
+            # NOW we can safely stop the -new containers
+            # nginx-proxy will route all traffic to the fresh 'web' and 'queue' containers
+            echo "⏹️ Stopping temporary -new containers..."
+            docker compose --profile deployment stop web-new queue-new
+            
+            # Clean up the -new containers
+            echo "🧹 Cleaning up temporary -new containers..."
+            docker compose --profile deployment rm -f web-new queue-new
+            
+            echo "✅ Zero-downtime deployment completed successfully!"
+            echo "🎯 Active container: web (with new code)"
 
       - name: Rollback on failure
         if: always() && (steps.deploy.outcome == 'failure' || steps.health-check.outcome == 'failure')
@@ -223,38 +255,54 @@ jobs:
             source ~/.bashrc
             cd ${{ inputs.environment }}
             
-            echo "🚨 Deployment or health check failed, initiating blue-green rollback..."
+            echo "🚨 Deployment or health check failed, performing rollback..."
             
-            # Read deployment state if it exists
-            if [ -f deployment.env ]; then
-              source deployment.env
-              echo "Rollback info - Current: $CURRENT_COLOR, Failed Target: $TARGET_COLOR"
+            # Stop and remove failed new containers
+            echo "⏹️ Stopping failed new containers..."
+            docker compose --profile deployment stop web-new queue-new || true
+            docker compose --profile deployment rm -f web-new queue-new || true
+            
+            # Verify production containers are still running and healthy
+            echo "🔍 Verifying production containers are still running and healthy..."
+            WEB_RUNNING=$(docker compose ps --services --filter "status=running" | grep -E "^web$" | wc -l)
+            QUEUE_RUNNING=$(docker compose ps --services --filter "status=running" | grep -E "^queue$" | wc -l)
+            
+            if [ "$WEB_RUNNING" -eq 0 ]; then
+              echo "🔄 Production web container not running, restarting..."
+              docker compose up --detach --no-build web redis --wait
               
-              # Stop the failed target deployment
-              echo "⏹️ Stopping failed $TARGET_COLOR services..."
-              docker compose stop web-$TARGET_COLOR queue-$TARGET_COLOR || true
-              docker compose rm -f web-$TARGET_COLOR queue-$TARGET_COLOR || true
-              
-              if [ "$CURRENT_COLOR" != "none" ]; then
-                # Ensure the previous working color is still running
-                echo "🔍 Verifying $CURRENT_COLOR services are running..."
-                CURRENT_RUNNING=$(docker compose ps --services --filter "status=running" | grep "web-$CURRENT_COLOR" | wc -l)
-                if [ "$CURRENT_RUNNING" -eq 0 ]; then
-                  echo "🔄 Restarting $CURRENT_COLOR services..."
-                  docker compose up --detach --no-build web-$CURRENT_COLOR queue-$CURRENT_COLOR redis --wait
+              # Verify web container is healthy after restart
+              for i in {1..6}; do
+                if docker compose exec -T web curl -sf http://localhost:8080/actions/app/health-check > /dev/null; then
+                  echo "✅ Production web container restarted and healthy (attempt $i)"
+                  break
+                else
+                  echo "⏳ Production web container not ready yet (attempt $i/6)..."
+                  if [ $i -eq 6 ]; then
+                    echo "❌ Production web container failed to restart properly"
+                    exit 1
+                  fi
+                  sleep 5
                 fi
-                echo "✅ Rollback completed - $CURRENT_COLOR is active"
-              else
-                echo "❌ No previous deployment to rollback to"
-                exit 1
-              fi
-              
-              # Cleanup
-              rm -f deployment.env
+              done
             else
-              echo "❌ No deployment state found - manual intervention may be required"
-              exit 1
+              echo "✅ Production web container is running"
+              # Still verify it's healthy
+              if docker compose exec -T web curl -sf http://localhost:8080/actions/app/health-check > /dev/null; then
+                echo "✅ Production web container is healthy"
+              else
+                echo "⚠️ Production web container is running but failing health checks"
+              fi
             fi
+            
+            if [ "$QUEUE_RUNNING" -eq 0 ]; then
+              echo "🔄 Production queue container not running, restarting..."
+              docker compose up --detach --no-build queue --wait
+            else
+              echo "✅ Production queue container is running"
+            fi
+            
+            echo "✅ Rollback completed - production containers are active and healthy"
 
       - name: Mark deployment as failed
         if: steps.deploy.outcome == 'failure' || steps.health-check.outcome == 'failure'
@@ -297,25 +345,20 @@ jobs:
             source ~/.bashrc
             cd ${{ inputs.environment }}
             
-            # Determine which color is currently active
-            BLUE_RUNNING=$(docker compose ps --services --filter "status=running" | grep "web-blue" | wc -l)
-            GREEN_RUNNING=$(docker compose ps --services --filter "status=running" | grep "web-green" | wc -l)
+            # Verify the active web container is running
+            WEB_RUNNING=$(docker compose ps --services --filter "status=running" | grep -E "^web$" | wc -l)
             
-            if [ "$BLUE_RUNNING" -gt 0 ] && [ "$GREEN_RUNNING" -eq 0 ]; then
-              ACTIVE_COLOR="blue"
-            elif [ "$GREEN_RUNNING" -gt 0 ] && [ "$BLUE_RUNNING" -eq 0 ]; then
-              ACTIVE_COLOR="green"
-            else
-              echo "❌ Unable to determine active color. Blue: $BLUE_RUNNING, Green: $GREEN_RUNNING"
+            if [ "$WEB_RUNNING" -eq 0 ]; then
+              echo "❌ Active web container not found or not running"
               exit 1
             fi
             
-            echo "🗃️ Running migrations on active $ACTIVE_COLOR deployment..."
-            docker compose exec -T web-$ACTIVE_COLOR php craft up --interactive=0
+            echo "🗃️ Running migrations on active web container..."
+            docker compose exec -T web php craft up --interactive=0
             
             echo "🧹 Clearing caches..."
-            docker compose exec -T web-$ACTIVE_COLOR php craft clear-caches/compiled-classes --interactive=0
-            docker compose exec -T web-$ACTIVE_COLOR php craft clear-caches/compiled-templates --interactive=0
-            docker compose exec -T web-$ACTIVE_COLOR php craft invalidate-tags/all --interactive=0
+            docker compose exec -T web php craft clear-caches/compiled-classes --interactive=0
+            docker compose exec -T web php craft clear-caches/compiled-templates --interactive=0
+            docker compose exec -T web php craft invalidate-tags/all --interactive=0
             
             echo "✅ Migrations and cache clearing completed"

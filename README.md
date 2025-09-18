@@ -8,8 +8,6 @@ A robust GitHub Actions workflow for deploying Craft CMS applications using Dock
 - 🔄 **Zero-downtime blue-green deployments** with automatic traffic switching
 - 🏥 **Health checking** with configurable endpoints and timeouts
 - 🔄 **Intelligent rollback** on deployment or health check failures
-- 📢 **Slack notifications** for deployment status updates
-- 🔒 **Secure deployments** with SSH-based container management
 - ⚡ **Fast builds** with Docker layer caching
 - 🔧 **Database migrations** and cache clearing automation
 
@@ -300,7 +298,6 @@ jobs:
     with:
       environment: staging
       domain: staging.yoursite.com
-      deployment-timeout: 300
       basic-auth: ${{ secrets.STAGING_BASIC_AUTH }}
 
 # .github/workflows/deploy-production.yml  
@@ -313,7 +310,6 @@ jobs:
     with:
       environment: production
       domain: yoursite.com
-      deployment-timeout: 600
 ```
 
 ## Contributing

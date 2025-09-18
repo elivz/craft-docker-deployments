@@ -1,5 +1,6 @@
 services:
-  web-blue: &web-container
+  # Active web service - this is always the current production container
+  web: &web-container
     image: {GHCR_REGISTRY}/{GHCR_REPOSITORY}:{BRANCH}
     restart: unless-stopped
     links:
@@ -26,21 +27,17 @@ services:
       timeout: 10s
       start_period: 30s
       retries: 3
-    labels:
-      - "deployment.color=blue"
 
-  web-green:
+  # New web service - used during deployments, becomes the new production
+  web-new:
     <<: *web-container
-    labels:
-      - "deployment.color=green"
-
-  # Legacy web service for backward compatibility
-  web:
-    <<: *web-container
+    deploy:
+      replicas: 0  # Start with 0 replicas, scale up during deployment
     profiles:
-      - legacy
+      - deployment
 
-  queue-blue: &queue-container
+  # Active queue service
+  queue: &queue-container
     <<: *web-container
     command: nice -n 10 php craft queue/listen --verbose
     environment:
@@ -54,19 +51,16 @@ services:
           memory: ${QUEUE_MEMORY_RESERVATION:-512M}
     healthcheck:
       test: php craft queue/info
-    labels:
-      - "deployment.color=blue"
 
-  queue-green:
+  # New queue service
+  queue-new:
     <<: *queue-container
-    labels:
-      - "deployment.color=green"
-
-  # Legacy queue service for backward compatibility  
-  queue:
-    <<: *queue-container
+    deploy:
+      replicas: 0  # Start with 0 replicas, scale up during deployment
     profiles:
-      - legacy
+      - deployment
+
+  # Redis service
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -77,6 +71,7 @@ services:
       test: redis-cli ping | grep PONG
       interval: 10s
       timeout: 10s
+
 volumes:
   storage:
   redis:

@@ -1,12 +1,12 @@
 # Craft Docker Deployments
 
-A robust GitHub Actions workflow for deploying Craft CMS applications using Docker containers with **zero-downtime blue-green deployments** and automatic rollback capabilities.
+A robust GitHub Actions workflow for deploying Craft CMS applications using Docker containers with **zero-downtime deployments** and automatic rollback capabilities.
 
 ## Features
 
 - 🚀 **Automated Docker builds** using GitHub Container Registry
-- 🔄 **Zero-downtime blue-green deployments** with automatic traffic switching
-- 🏥 **Health checking** with configurable endpoints and timeouts
+- 🔄 **Zero-downtime deployments** with nginx-proxy load balancing
+- 🏥 **Health checking** with configurable endpoints and automatic verification
 - 🔄 **Intelligent rollback** on deployment or health check failures
 - ⚡ **Fast builds** with Docker layer caching
 - 🔧 **Database migrations** and cache clearing automation
@@ -105,26 +105,25 @@ jobs:
 - Pushes images with environment-specific tags
 - Utilizes GitHub Actions cache for faster builds
 
-### 2. Blue-Green Deployment Phase
-- **Determines current state**: Identifies which color (blue/green) is currently active
-- **Starts new deployment**: Deploys new version to the inactive color
-- **Parallel operation**: Both old and new versions run simultaneously during switchover
-- **nginx-proxy load balancing**: Automatically distributes traffic between active services
+### 2. Zero-Downtime Deployment Phase
+- **Starts new containers**: Deploys new version alongside current production containers
+- **Load balancing**: nginx-proxy automatically distributes traffic between old and new containers
+- **Health verification**: Internal health checks ensure new containers are ready before proceeding
+- **Traffic migration**: nginx-proxy balances traffic between old and new containers
 
-### 3. Health Check Phase
-- Performs HTTP health checks against the configured endpoint on the new deployment
-- Retries up to 6 times with 10-second intervals
-- Supports basic authentication if configured
-- **Zero-downtime**: Old version continues serving traffic during health checks
+### 3. Completion Phase
+- **Graceful shutdown**: Stops old containers only after new ones are verified healthy
+- **Container promotion**: New containers are promoted to production names (web, queue)
+- **Clean state**: Removes temporary containers to maintain clean deployment state
 
-### 4. Completion Phase
-- **Traffic migration**: nginx-proxy automatically includes healthy new containers in load balancing
-- **Graceful shutdown**: Stops old color containers only after new ones are confirmed healthy
-- **Clean state**: Removes old containers to maintain clean deployment state
+### 4. Final Health Check Phase
+- Performs HTTP health checks against the public domain
+- Confirms the entire deployment is working correctly
+- Uses configurable retry attempts and timeouts
 
 ### 5. Rollback on Failure
-- **Automatic trigger**: Activates if deployment or health checks fail
-- **Instant rollback**: Stops failed new deployment, ensures old deployment remains active
+- **Automatic trigger**: Activates if any deployment step or health check fails
+- **Instant rollback**: Stops failed containers, ensures production containers remain active
 - **Zero-downtime**: Traffic continues flowing to working version throughout rollback
 - **Detailed logging**: Provides comprehensive troubleshooting information
 
@@ -133,42 +132,44 @@ jobs:
 - Clears application caches
 - Cleans up old Docker images to maintain server storage
 
-## Blue-Green Deployment System
+## Zero-Downtime Deployment System
 
-The deployment workflow implements a **zero-downtime blue-green deployment strategy** using nginx-proxy for automatic load balancing and traffic switching.
+The deployment workflow implements a **zero-downtime deployment strategy** using nginx-proxy for automatic load balancing and traffic switching.
 
-### How Blue-Green Deployment Works
-1. **Color determination**: The system identifies which color (blue/green) is currently active
-2. **Parallel deployment**: New version deploys to the inactive color while old version continues serving traffic
-3. **Health verification**: New deployment undergoes thorough health checks before traffic switching
-4. **Automatic traffic migration**: nginx-proxy automatically includes healthy containers in load balancing pool
-5. **Graceful shutdown**: Old deployment stops only after new deployment is confirmed stable
+### How Zero-Downtime Deployment Works
+1. **Parallel deployment**: New containers start alongside current production containers
+2. **Load balancing**: nginx-proxy automatically includes new containers in traffic distribution
+3. **Health verification**: Internal health checks ensure new containers are fully ready
+4. **Graceful transition**: Old containers stop only after new containers are verified healthy
+5. **Container promotion**: New containers are promoted to production names for consistency
 
-### Blue-Green Architecture
-- **web-blue/web-green**: Parallel web service containers that can run simultaneously
-- **queue-blue/queue-green**: Corresponding background job processing containers
+### Deployment Architecture
+- **web/web-new**: Current production and temporary deployment containers
+- **queue/queue-new**: Background job processing containers for each deployment
 - **Shared resources**: Redis and storage volumes are shared between deployments
 - **nginx-proxy integration**: Uses `VIRTUAL_HOST` environment variable for automatic service discovery
 
 ### Traffic Switching Process
-- **Gradual transition**: nginx-proxy naturally load balances between old and new containers
-- **Health-based routing**: Only healthy containers receive traffic
-- **Instant rollback capability**: Failed deployments are immediately removed from load balancing
+- **Automatic load balancing**: nginx-proxy distributes traffic between all healthy containers
+- **Health-based routing**: Only containers passing health checks receive traffic
+- **Seamless transition**: Users experience no downtime during the container switchover
+- **Instant rollback capability**: Failed deployments are immediately excluded from load balancing
 
 ### Zero-Downtime Benefits
 - **No service interruption**: Users experience no downtime during deployments
-- **Risk mitigation**: New versions are thoroughly tested before receiving production traffic
+- **Risk mitigation**: New versions are thoroughly tested before serving production traffic
 - **Instant recovery**: Rollbacks happen in seconds, not minutes
-- **Confidence in deployments**: Safe to deploy during business hours
+- **Safe deployments**: Deploy confidently during business hours
 
 ### When Rollback Triggers
 - Docker Compose deployment failures
 - Container startup failures  
-- Health check failures (HTTP endpoint unreachable)
-- Any critical error during the blue-green deployment process
+- Internal container health check failures
+- External health check failures (HTTP endpoint unreachable)
+- Any critical error during the deployment process
 
 ### Rollback Process
-- **Immediate action**: Failed target deployment is stopped instantly
+- **Immediate action**: Failed deployment containers are stopped instantly
 - **Traffic preservation**: Original working deployment continues serving all traffic
 - **State verification**: System confirms working deployment is healthy
 - **Clean recovery**: Failed deployment artifacts are cleaned up automatically
@@ -182,12 +183,13 @@ Used for building and pushing images during CI:
 
 ### `docker-compose.deployment.yml`
 Template for zero-downtime production deployments:
-- **Blue-green services**: Defines `web-blue`, `web-green`, `queue-blue`, `queue-green` for parallel deployments
+- **Web services**: Defines `web` (production) and `web-new` (deployment) containers
+- **Queue services**: Defines `queue` (production) and `queue-new` (deployment) containers  
 - **nginx-proxy integration**: Uses `VIRTUAL_HOST` for automatic service discovery and load balancing
-- **Shared resources**: Storage and Redis volumes are shared between blue/green deployments
+- **Shared resources**: Storage and Redis volumes are shared between deployments
 - **Health checks**: Built-in container health monitoring for deployment verification
 - **Resource limits**: Configurable memory and replica settings per environment
-- **Legacy compatibility**: Maintains backward compatibility with single-service deployments
+- **YAML anchors**: Uses anchors to reduce duplication between services
 
 ## Troubleshooting
 
@@ -195,14 +197,14 @@ Template for zero-downtime production deployments:
 
 **Health checks timeout**
 - Increase health check retry attempts or intervals in workflow
-- Verify health check endpoint is accessible on both blue and green deployments
+- Verify health check endpoint is accessible in new containers
 - Check basic auth credentials if required
 - Ensure containers have sufficient startup time
 
-**Blue-green state conflicts**
+**Container state conflicts**
 - Check for orphaned containers: `docker compose ps -a`
 - Clean up stopped containers: `docker compose rm -f`
-- Verify only one color is active: both blue and green running simultaneously indicates an interrupted deployment
+- Verify proper container state: only `web` and `queue` should be running in production
 
 **SSH connection failures**
 - Verify `DEPLOY_HOST`, `DEPLOY_USER`, and `DEPLOY_KEY` secrets
@@ -216,28 +218,28 @@ Template for zero-downtime production deployments:
 - Confirm containers are healthy and passing health checks
 
 **Deployment stuck in mixed state**
-- Both blue and green containers running: Check workflow logs for interruption point
-- Manual cleanup: Stop one color manually and let the system stabilize
-- Emergency rollback: Stop new deployment and ensure old deployment is running
+- Both web and web-new containers running: Check workflow logs for interruption point
+- Manual cleanup: Stop temporary containers manually and let the system stabilize
+- Emergency rollback: Stop new deployment and ensure production deployment is running
 
 ### Debugging
 
 Enable verbose logging by checking the GitHub Actions workflow logs:
 - **Build logs**: Show Docker build output and caching information
-- **Blue-green deployment logs**: Include color determination, parallel container startup, and traffic switching details
+- **Deployment logs**: Include container startup, health checks, and traffic switching details
 - **Health check logs**: Provide detailed information about endpoint testing and retry attempts
 - **Rollback logs**: Show step-by-step restoration process for failed deployments
 
-**Blue-Green Specific Debugging:**
-- **Color state tracking**: Each deployment logs current and target colors
-- **Container status verification**: Logs show which containers are running for each color
-- **Traffic routing verification**: nginx-proxy integration status and health check results
-- **Cleanup operations**: Detailed logging of old container shutdown and removal
+**Deployment-Specific Debugging:**
+- **Container status tracking**: Each deployment logs current container states
+- **Health check verification**: Logs show internal and external health check results
+- **Traffic routing verification**: nginx-proxy integration status and load balancing behavior
+- **Cleanup operations**: Detailed logging of container shutdown and removal processes
 
 ## Best Practices
 
 ### Deployment Strategy
-- **Zero-downtime deployments**: Use blue-green strategy to eliminate service interruption
+- **Zero-downtime deployments**: Use nginx-proxy load balancing to eliminate service interruption
 - **Deploy during business hours**: Safe to deploy anytime with zero-downtime approach
 - **Gradual rollouts**: Consider using feature flags for additional deployment safety
 - **Monitor nginx-proxy**: Ensure load balancer is healthy and routing traffic correctly

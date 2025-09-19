@@ -42,8 +42,6 @@ sed -i -e "s|{VIRTUAL_HOST}|$DOMAIN|g" docker-compose.yml
 sed -i -e "s|{GHCR_REGISTRY}|$GHCR_REGISTRY|g" docker-compose.yml
 sed -i -e "s|{GHCR_REPOSITORY}|$GHCR_REPOSITORY|g" docker-compose.yml
 
-echo "🚀 Starting zero-downtime deployment..."
-
 # Pull new container images
 echo "📥 Pulling new images..."
 docker compose pull -q
@@ -91,4 +89,3 @@ docker compose --profile deployment stop web-new queue-new
 docker compose --profile deployment rm -f web-new queue-new
 
 echo "✅ Zero-downtime deployment completed successfully!"
-echo "🎯 Active containers: web, queue (with new code)"

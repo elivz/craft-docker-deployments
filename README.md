@@ -191,6 +191,37 @@ Template for zero-downtime production deployments:
 - **Resource limits**: Configurable memory and replica settings per environment
 - **YAML anchors**: Uses anchors to reduce duplication between services
 
+## Deployment Scripts
+
+The workflow uses modular bash scripts for better maintainability and reusability:
+
+### `.github/workflows/scripts/deploy.sh`
+Main zero-downtime deployment script that:
+- Sets up the environment and logs into the container registry
+- Configures docker-compose files with environment-specific values
+- Starts new containers alongside production containers
+- Performs internal health checks on new containers
+- Gracefully transitions traffic from old to new containers
+- Promotes new containers to production names
+
+### `.github/workflows/scripts/rollback.sh`
+Rollback script for deployment failures that:
+- Cleans up failed deployment containers
+- Ensures production containers are running and healthy
+- Restores the system to a known good state
+
+### `.github/workflows/scripts/migrate.sh`
+Database migration script that:
+- Runs Craft CMS database migrations on the active container
+- Clears compiled caches and templates
+- Invalidates application caches
+
+### Script Architecture Benefits
+- **Maintainability**: Scripts can be edited and tested independently
+- **Reusability**: Scripts can be run manually for debugging or emergency deployments
+- **Version control**: Script changes are tracked with the workflow
+- **Modularity**: Each script has a single, clear responsibility
+
 ## Troubleshooting
 
 ### Common Issues
@@ -260,32 +291,70 @@ Enable verbose logging by checking the GitHub Actions workflow logs:
 - Utilize build caching for faster CI builds
 - Consider using multi-stage builds for optimization
 
-## Advanced Configuration
+## Troubleshooting
 
-### Custom Health Check Endpoint
+### Common Issues
 
-Create a custom health check in your Craft CMS application:
+**Deployment fails with "Health check timeout"**
+- Check that your web container is starting properly: `docker compose logs web-new`
+- Verify the health check endpoint is accessible: `curl -sf http://localhost:8080/actions/app/health-check`
+- Increase health check timeout in the deployment script if needed
 
-```php
-// In your controller or module
-public function actionHealthCheck()
-{
-    // Check database connectivity
-    $dbOk = Craft::$app->getDb()->getIsActive();
-    
-    // Check other services (Redis, external APIs, etc.)
-    $redisOk = // your Redis check
-    
-    if ($dbOk && $redisOk) {
-        return $this->asJson(['status' => 'ok']);
-    }
-    
-    Craft::$app->getResponse()->setStatusCode(503);
-    return $this->asJson(['status' => 'error']);
-}
+**Containers fail to start**
+- Check for port conflicts: `docker ps -a`
+- Verify the container image exists: `docker images | grep your-repo`
+- Check Docker Compose logs: `docker compose logs web-new queue-new`
+
+**Domain not responding after deployment**
+- Check nginx-proxy status: `docker compose -f nginx-proxy/docker-compose.yml logs`
+- Verify container is registered with nginx-proxy: `docker network inspect nginx-proxy_default`
+- Test internal container connectivity: `docker compose exec web curl -sf http://web:8080`
+
+**Database migrations fail**
+- Check Craft CLI access: `docker compose exec web ./craft migrate/all --interactive=0`
+- Verify database connectivity: `docker compose exec web ./craft db/backup`
+- Check migration logs: `docker compose logs web`
+
+### Manual Recovery
+
+If a deployment gets stuck or fails partially:
+
+```bash
+# Clean up failed deployment
+docker compose --profile deployment down
+docker compose --profile deployment rm -f
+
+# Reset to stable state
+docker compose up -d web queue
+docker compose exec web ./craft clear-caches/all
+
+# Verify system health
+curl -sf https://your-domain.com/actions/app/health-check
 ```
 
-### Environment-Specific Configurations
+### Monitoring and Alerts
+
+Consider setting up monitoring for:
+- Container health status
+- Response time and availability
+- Database connection status
+- Disk space and resource usage
+
+Example health check for monitoring systems:
+```bash
+#!/bin/bash
+# Simple health check script for monitoring
+response=$(curl -sf https://your-domain.com/actions/app/health-check)
+if [ $? -eq 0 ]; then
+    echo "Site is healthy: $response"
+    exit 0
+else
+    echo "Site health check failed"
+    exit 1
+fi
+```
+
+## Environment-Specific Configurations
 
 Use different configurations for each environment:
 

@@ -86,79 +86,22 @@ jobs:
 
       - name: Deploy changes
         id: deploy
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1
         continue-on-error: true
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
           command_timeout: 7m
-          script: |
-            set -e
-            source ~/.bashrc
-            
-            # Setup environment
-            mkdir -p ${{ inputs.environment }}
-            cd ${{ inputs.environment }}
-            
-            # Login to registry
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login --username ${{ github.actor }} --password-stdin ${{ env.GHCR_REGISTRY }}
-            
-            # Configure docker-compose file
-            sed -i -e "s|{BRANCH}|${{ inputs.environment }}|g" docker-compose.yml
-            sed -i -e "s|{VIRTUAL_HOST}|${{ inputs.domain }}|g" docker-compose.yml
-            sed -i -e "s|{GHCR_REGISTRY}|${{ env.GHCR_REGISTRY }}|g" docker-compose.yml
-            sed -i -e "s|{GHCR_REPOSITORY}|${{ env.GHCR_REPOSITORY }}|g" docker-compose.yml
-            
-            echo "🚀 Starting zero-downtime deployment..."
-            
-            # Pull new images
-            echo "📥 Pulling new images..."
-            docker compose pull -q
-            
-            # Start new containers alongside existing production
-            # Both will have the same VIRTUAL_HOST, so nginx-proxy will load balance
-            echo "🔬 Starting new containers alongside current production..."
-            docker compose --profile deployment up --detach --wait --no-build web-new queue-new --scale web-new=1 --scale queue-new=1
-            
-            # Verify new containers are healthy before proceeding
-            echo "🔍 Verifying new containers are healthy..."
-            for i in {1..12}; do
-              if docker compose exec -T web-new curl -sf http://localhost:8080/actions/app/health-check > /dev/null; then
-                echo "✅ New container health check passed (attempt $i)"
-                break
-              else
-                echo "⏳ New container not ready yet (attempt $i/12)..."
-                if [ $i -eq 12 ]; then
-                  echo "❌ New container failed health check after 12 attempts"
-                  exit 1
-                fi
-                sleep 5
-              fi
-            done
-            
-            echo "✅ New services are healthy and ready"
-            echo "🌐 nginx-proxy is now load balancing between old and new containers"
-            
-            # Gracefully stop old containers (traffic automatically goes to new ones)
-            echo "⏹️ Gracefully stopping old production containers..."
-            docker compose stop web queue
-            docker compose rm -f web queue
-            
-            # Start fresh production containers BEFORE stopping the temporary new ones
-            echo "🚀 Starting fresh production containers alongside -new containers..."
-            docker compose up --detach --no-build web queue --wait
-            
-            # Give nginx-proxy a moment to detect the new production containers
-            echo "⏳ Allowing nginx-proxy to detect new production containers..."
-            sleep 10
-            
-            # NOW we can safely stop the -new containers
-            echo "⏹️ Stopping and removing temporary -new containers..."
-            docker compose --profile deployment stop web-new queue-new
-            docker compose --profile deployment rm -f web-new queue-new
-            
-            echo "✅ Deployment completed!"
+          script_path: .github/workflows/scripts/deploy.sh
+          envs: ENVIRONMENT,DOMAIN,GHCR_REGISTRY,GHCR_REPOSITORY,GITHUB_TOKEN,GITHUB_ACTOR
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          DOMAIN: ${{ inputs.domain }}
+          GHCR_REGISTRY: ${{ env.GHCR_REGISTRY }}
+          GHCR_REPOSITORY: ${{ env.GHCR_REPOSITORY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
 
       - name: Final Health Check
         id: final-health-check
@@ -172,28 +115,16 @@ jobs:
 
       - name: Rollback on failure
         if: always() && (steps.deploy.outcome == 'failure' || steps.final-health-check.outcome == 'failure')
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
           command_timeout: 60s
-          script: |
-            set -e
-            source ~/.bashrc
-            cd ${{ inputs.environment }}
-            
-            echo "🚨 Deployment failed, performing rollback..."
-            
-            # Clean up failed new containers
-            docker compose --profile deployment stop web-new queue-new || true
-            docker compose --profile deployment rm -f web-new queue-new || true
-            
-            # Ensure production containers are running
-            echo "🔍 Ensuring production containers are healthy..."
-            docker compose up --detach --no-build
-            
-            echo "✅ Rollback completed - production is restored"
+          script_path: .github/workflows/scripts/rollback.sh
+          envs: ENVIRONMENT
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
 
       - name: Mark deployment as failed
         if: steps.deploy.outcome == 'failure' || steps.final-health-check.outcome == 'failure'
@@ -209,27 +140,20 @@ jobs:
     environment: ${{ inputs.environment }}
     timeout-minutes: 30
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Run Craft migrations and clear caches
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
           command_timeout: 25m
-          script: |
-            set -e
-            source ~/.bashrc
-            cd ${{ inputs.environment }}
-            
-            echo "🗃️ Running migrations on active web container..."
-            docker compose exec -T web php craft up --interactive=0
-            
-            echo "🧹 Clearing caches..."
-            docker compose exec -T web php craft clear-caches/compiled-classes --interactive=0
-            docker compose exec -T web php craft clear-caches/compiled-templates --interactive=0
-            docker compose exec -T web php craft invalidate-tags/all --interactive=0
-            
-            echo "✅ Migrations and cache clearing completed"
+          script_path: .github/workflows/scripts/migrate.sh
+          envs: ENVIRONMENT
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
           
 
   # Job 4: Clean up old images

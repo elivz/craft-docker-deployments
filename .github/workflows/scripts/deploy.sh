@@ -66,13 +66,19 @@ docker compose --profile deployment up --detach --wait --no-build web-new --scal
 # Verify new containers are healthy before proceeding
 echo "🔍 Verifying new containers are healthy..."
 for i in {1..12}; do
-  if docker compose exec -T web-new curl -sf http://localhost:8080/actions/app/health-check > /dev/null; then
+  # Perform health check with proper validation
+  RESPONSE=$(docker compose exec -T web-new curl -s -w "%{http_code}" http://localhost:8080/actions/app/health-check 2>/dev/null || echo "000")
+  HTTP_CODE="${RESPONSE: -3}"
+  BODY="${RESPONSE%???}"
+  
+  if [ "$HTTP_CODE" = "200" ] && [ -z "$BODY" ]; then
     echo "✅ New container health check passed (attempt $i)"
     break
   else
-    echo "⏳ New container not ready yet (attempt $i/12)..."
+    echo "⏳ New container not ready yet (attempt $i/12) - HTTP: $HTTP_CODE, Body: '$BODY'..."
     if [ $i -eq 12 ]; then
       echo "❌ New container failed health check after 12 attempts"
+      echo "❌ Final status - HTTP: $HTTP_CODE, Body: '$BODY'"
       exit 1
     fi
     sleep 5

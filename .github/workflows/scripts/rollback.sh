@@ -55,7 +55,12 @@ else
         # Wait for container to be ready
         echo "⏳ Waiting for rollback container to be ready..."
         for i in {1..30}; do
-            if docker compose -f docker-compose.rollback.yml exec web curl -sf http://localhost:8080/actions/app/health-check >/dev/null 2>&1; then
+            # Perform health check with proper validation
+            RESPONSE=$(docker compose -f docker-compose.rollback.yml exec web curl -s -w "%{http_code}" http://localhost:8080/actions/app/health-check 2>/dev/null || echo "000")
+            HTTP_CODE="${RESPONSE: -3}"
+            BODY="${RESPONSE%???}"
+            
+            if [ "$HTTP_CODE" = "200" ] && [ -z "$BODY" ]; then
                 echo "✅ Rollback container is healthy"
                 
                 # Replace the main docker-compose.yml with the rollback version
@@ -65,11 +70,12 @@ else
             
             if [ $i -eq 30 ]; then
                 echo "❌ Rollback container failed to become healthy"
+                echo "❌ Final status - HTTP: $HTTP_CODE, Body: '$BODY'"
                 rm -f docker-compose.rollback.yml
                 exit 1
             fi
             
-            echo "⏳ Attempt $i/30 - waiting for container..."
+            echo "⏳ Attempt $i/30 - waiting for container... HTTP: $HTTP_CODE, Body: '$BODY'"
             sleep 5
         done
         

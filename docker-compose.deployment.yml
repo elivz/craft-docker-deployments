@@ -52,14 +52,6 @@ services:
     healthcheck:
       test: php craft queue/info
 
-  # New queue service
-  queue-new:
-    <<: *queue-container
-    deploy:
-      replicas: 0  # Start with 0 replicas, scale up during deployment
-    profiles:
-      - deployment
-
   # Redis service
   redis:
     image: redis:7-alpine

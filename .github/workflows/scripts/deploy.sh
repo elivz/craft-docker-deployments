@@ -31,6 +31,15 @@ echo "📁 Setting up environment directory..."
 mkdir -p "$ENVIRONMENT"
 cd "$ENVIRONMENT"
 
+# Save current stable image before deployment (for rollback purposes)
+if docker compose ps web >/dev/null 2>&1; then
+    CURRENT_IMAGE=$(docker compose config | grep "image:" | head -1 | awk '{print $2}')
+    if [ ! -z "$CURRENT_IMAGE" ]; then
+        echo "💾 Saving current stable image for rollback: $CURRENT_IMAGE"
+        echo "$CURRENT_IMAGE" > .last-stable-image
+    fi
+fi
+
 # Login to container registry
 echo "🔐 Logging into GitHub Container Registry..."
 echo "$GITHUB_TOKEN" | docker login --username "$GITHUB_ACTOR" --password-stdin "$GHCR_REGISTRY"
@@ -49,7 +58,7 @@ docker compose pull -q
 # Start new containers alongside existing production
 # Both will have the same VIRTUAL_HOST, so nginx-proxy will load balance
 echo "🔬 Starting new containers alongside current production..."
-docker compose --profile deployment up --detach --wait --no-build web-new queue-new --scale web-new=1 --scale queue-new=1
+docker compose --profile deployment up --detach --wait --no-build web-new --scale web-new=1
 
 # Verify new containers are healthy before proceeding
 echo "🔍 Verifying new containers are healthy..."
@@ -72,8 +81,8 @@ echo "🌐 nginx-proxy is now load balancing between old and new containers"
 
 # Gracefully stop old containers (traffic automatically goes to new ones)
 echo "⏹️ Gracefully stopping old production containers..."
-docker compose stop web queue
-docker compose rm -f web queue
+docker compose stop web
+docker compose rm -f web
 
 # Start fresh production containers BEFORE stopping the temporary new ones
 echo "🚀 Starting fresh production containers alongside -new containers..."
@@ -85,7 +94,7 @@ sleep 10
 
 # NOW we can safely stop the -new containers
 echo "⏹️ Stopping and removing temporary -new containers..."
-docker compose --profile deployment stop web-new queue-new
-docker compose --profile deployment rm -f web-new queue-new
+docker compose --profile deployment stop web-new
+docker compose --profile deployment rm -f web-new
 
 echo "✅ Zero-downtime deployment completed successfully!"

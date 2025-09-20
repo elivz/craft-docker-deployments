@@ -52,6 +52,37 @@ Ensure your deployment server has:
 - SSH access configured for the deploy user
 - GitHub Container Registry access (handled automatically)
 
+#### nginx-proxy Setup
+
+The zero-downtime deployment system requires nginx-proxy to be running on your server for load balancing:
+
+1. **Copy the nginx-proxy configuration** to your server:
+   ```bash
+   # From your local machine, copy the entire nginx-proxy directory
+   scp -r infra/nginx-proxy/ user@your-server.com:~/
+   ```
+
+2. **Create the nginx-proxy network**:
+   ```bash
+   # On your server
+   docker network create nginx-proxy
+   ```
+
+3. **Start nginx-proxy**:
+   ```bash
+   # On your server
+   cd nginx-proxy
+   docker compose up -d
+   ```
+
+4. **Verify nginx-proxy is running**:
+   ```bash
+   docker ps | grep nginx-proxy
+   docker network ls | grep nginx-proxy
+   ```
+
+The nginx-proxy service will automatically detect and route traffic to your application containers based on the `VIRTUAL_HOST` environment variable.
+
 ### 4. Slack Notifications (Optional)
 
 Set up deployment notifications using GitHub's official Slack app for better integration and easier management:
@@ -145,7 +176,7 @@ The deployment workflow implements a **zero-downtime deployment strategy** using
 
 ### Deployment Architecture
 - **web/web-new**: Current production and temporary deployment containers
-- **queue/queue-new**: Background job processing containers for each deployment
+- **queue**: Background job processing containers
 - **Shared resources**: Redis and storage volumes are shared between deployments
 - **nginx-proxy integration**: Uses `VIRTUAL_HOST` environment variable for automatic service discovery
 
@@ -169,10 +200,11 @@ The deployment workflow implements a **zero-downtime deployment strategy** using
 - Any critical error during the deployment process
 
 ### Rollback Process
-- **Immediate action**: Failed deployment containers are stopped instantly
-- **Traffic preservation**: Original working deployment continues serving all traffic
-- **State verification**: System confirms working deployment is healthy
-- **Clean recovery**: Failed deployment artifacts are cleaned up automatically
+- **Container cleanup**: Failed `web-new` deployment containers are stopped and removed
+- **Image restoration**: If available, restores from previous stable image automatically  
+- **Health verification**: Confirms rollback containers are healthy before completion
+- **Fallback protection**: Ensures containers are running even if image rollback fails
+- **Fast recovery**: Simplified logic completes rollback in seconds
 
 ## Docker Compose Files
 
@@ -184,7 +216,7 @@ Used for building and pushing images during CI:
 ### `docker-compose.deployment.yml`
 Template for zero-downtime production deployments:
 - **Web services**: Defines `web` (production) and `web-new` (deployment) containers
-- **Queue services**: Defines `queue` (production) and `queue-new` (deployment) containers  
+- **Queue services**: Defines `queue` (production) containers that restart in place
 - **nginx-proxy integration**: Uses `VIRTUAL_HOST` for automatic service discovery and load balancing
 - **Shared resources**: Storage and Redis volumes are shared between deployments
 - **Health checks**: Built-in container health monitoring for deployment verification
@@ -205,10 +237,12 @@ Main zero-downtime deployment script that:
 - Promotes new containers to production names
 
 ### `.github/workflows/scripts/rollback.sh`
-Rollback script for deployment failures that:
-- Cleans up failed deployment containers
-- Ensures production containers are running and healthy
-- Restores the system to a known good state
+Simplified rollback script for deployment failures that:
+- Cleans up failed `web-new` deployment containers
+- Attempts to restore from previous stable image if available
+- Performs health checks to verify rollback success
+- Falls back to ensuring current containers are running
+- Provides fast and reliable recovery with minimal complexity
 
 ### `.github/workflows/scripts/migrate.sh`
 Database migration script that:
@@ -290,69 +324,6 @@ Enable verbose logging by checking the GitHub Actions workflow logs:
 - Keep Docker images lean to reduce deployment time
 - Utilize build caching for faster CI builds
 - Consider using multi-stage builds for optimization
-
-## Troubleshooting
-
-### Common Issues
-
-**Deployment fails with "Health check timeout"**
-- Check that your web container is starting properly: `docker compose logs web-new`
-- Verify the health check endpoint is accessible: `curl -sf http://localhost:8080/actions/app/health-check`
-- Increase health check timeout in the deployment script if needed
-
-**Containers fail to start**
-- Check for port conflicts: `docker ps -a`
-- Verify the container image exists: `docker images | grep your-repo`
-- Check Docker Compose logs: `docker compose logs web-new queue-new`
-
-**Domain not responding after deployment**
-- Check nginx-proxy status: `docker compose -f nginx-proxy/docker-compose.yml logs`
-- Verify container is registered with nginx-proxy: `docker network inspect nginx-proxy_default`
-- Test internal container connectivity: `docker compose exec web curl -sf http://web:8080`
-
-**Database migrations fail**
-- Check Craft CLI access: `docker compose exec web ./craft migrate/all --interactive=0`
-- Verify database connectivity: `docker compose exec web ./craft db/backup`
-- Check migration logs: `docker compose logs web`
-
-### Manual Recovery
-
-If a deployment gets stuck or fails partially:
-
-```bash
-# Clean up failed deployment
-docker compose --profile deployment down
-docker compose --profile deployment rm -f
-
-# Reset to stable state
-docker compose up -d web queue
-docker compose exec web ./craft clear-caches/all
-
-# Verify system health
-curl -sf https://your-domain.com/actions/app/health-check
-```
-
-### Monitoring and Alerts
-
-Consider setting up monitoring for:
-- Container health status
-- Response time and availability
-- Database connection status
-- Disk space and resource usage
-
-Example health check for monitoring systems:
-```bash
-#!/bin/bash
-# Simple health check script for monitoring
-response=$(curl -sf https://your-domain.com/actions/app/health-check)
-if [ $? -eq 0 ]; then
-    echo "Site is healthy: $response"
-    exit 0
-else
-    echo "Site health check failed"
-    exit 1
-fi
-```
 
 ## Environment-Specific Configurations
 

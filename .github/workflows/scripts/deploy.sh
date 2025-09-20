@@ -33,10 +33,13 @@ cd "$ENVIRONMENT"
 
 # Save current stable image before deployment (for rollback purposes)
 if docker compose ps web >/dev/null 2>&1; then
-    CURRENT_IMAGE=$(docker compose config | grep "image:" | head -1 | awk '{print $2}')
+    # Get the actual running container's image (with full tag/hash)
+    CURRENT_IMAGE=$(docker inspect $(docker compose ps -q web) --format='{{.Image}}' 2>/dev/null || echo "")
     if [ ! -z "$CURRENT_IMAGE" ]; then
         echo "💾 Saving current stable image for rollback: $CURRENT_IMAGE"
         echo "$CURRENT_IMAGE" > .last-stable-image
+    else
+        echo "⚠️  Could not determine current image for rollback"
     fi
 fi
 

@@ -29,7 +29,8 @@ if [ -f ".last-stable-image" ]; then
     echo "📦 Rolling back to previous image: $PREVIOUS_IMAGE"
     
     # Update docker-compose.yml with previous image
-    sed -i "s|image: .*|image: $PREVIOUS_IMAGE|g" docker-compose.yml
+    # Use # as delimiter since image names contain / and :
+    sed -i "s#image: .*#image: $PREVIOUS_IMAGE#g" docker-compose.yml
     
     # Restart with previous image
     docker compose down web queue --timeout 30

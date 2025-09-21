@@ -79,6 +79,13 @@ for i in {1..12}; do
     if [ $i -eq 12 ]; then
       echo "❌ New container failed health check after 12 attempts"
       echo "❌ Final status - HTTP: $HTTP_CODE, Body: '$BODY'"
+      
+      # Clean up failed web-new container before exiting
+      echo "🧹 Cleaning up failed web-new container..."
+      docker compose --profile deployment stop web-new || true
+      docker compose --profile deployment rm -f web-new || true
+      echo "✅ Cleanup completed - original web containers continue serving traffic"
+      
       exit 1
     fi
     sleep 5

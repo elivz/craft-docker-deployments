@@ -60,37 +60,9 @@ docker compose pull -q
 
 # Start new containers alongside existing production
 # Both will have the same VIRTUAL_HOST, so nginx-proxy will load balance
+# The --wait flag will wait for built-in health checks to pass
 echo "🔬 Starting new containers alongside current production..."
 docker compose --profile deployment up --detach --wait --no-build web-new --scale web-new=1
-
-# Verify new containers are healthy before proceeding
-echo "🔍 Verifying new containers are healthy..."
-for i in {1..12}; do
-  # Perform health check with proper validation
-  RESPONSE=$(docker compose exec -T web-new curl -s -w "%{http_code}" http://localhost:8080/actions/app/health-check 2>/dev/null || echo "000")
-  HTTP_CODE="${RESPONSE: -3}"
-  BODY="${RESPONSE%???}"
-  
-  if [ "$HTTP_CODE" = "200" ] && [ -z "$BODY" ]; then
-    echo "✅ New container health check passed (attempt $i)"
-    break
-  else
-    echo "⏳ New container not ready yet (attempt $i/12) - HTTP: $HTTP_CODE, Body: '$BODY'..."
-    if [ $i -eq 12 ]; then
-      echo "❌ New container failed health check after 12 attempts"
-      echo "❌ Final status - HTTP: $HTTP_CODE, Body: '$BODY'"
-      
-      # Clean up failed web-new container before exiting
-      echo "🧹 Cleaning up failed web-new container..."
-      docker compose --profile deployment stop web-new || true
-      docker compose --profile deployment rm -f web-new || true
-      echo "✅ Cleanup completed - original web containers continue serving traffic"
-      
-      exit 1
-    fi
-    sleep 5
-  fi
-done
 
 echo "✅ New services are healthy and ready"
 echo "🌐 nginx-proxy is now load balancing between old and new containers"

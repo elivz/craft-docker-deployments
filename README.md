@@ -132,7 +132,7 @@ jobs:
 
 ### 1. Build Phase
 - Checks out code and logs into GitHub Container Registry
-- Builds Docker images using `docker-compose.ci.yml`
+- Builds Docker images using `composeci.yml`
 - Pushes images with environment-specific tags
 - Utilizes GitHub Actions cache for faster builds
 
@@ -208,12 +208,12 @@ The deployment workflow implements a **zero-downtime deployment strategy** using
 
 ## Docker Compose Files
 
-### `docker-compose.ci.yml`
+### `composeci.yml`
 Used for building and pushing images during CI:
 - Defines build context and Dockerfile location
 - Configures image tags and registry settings
 
-### `docker-compose.deployment.yml`
+### `composedeployment.yml`
 Template for zero-downtime production deployments:
 - **Web services**: Defines `web` (production) and `web-new` (deployment) containers
 - **Queue services**: Defines `queue` (production) containers that restart in place

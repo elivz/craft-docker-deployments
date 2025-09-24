@@ -54,7 +54,7 @@ jobs:
         id: build
         uses: docker/bake-action@v6
         with:
-          files: docker-compose.ci.yml
+          files: compose.ci.yml
           push: true
           set: |
             *.cache-from=type=registry,ref=${{ env.GHCR_REGISTRY }}/${{ env.GHCR_REPOSITORY }}:latest
@@ -81,8 +81,8 @@ jobs:
           REMOTE_USER: ${{ secrets.DEPLOY_USER }}
           SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_KEY }}
           ARGS: "-rltgoDzvO"
-          SOURCE: "docker-compose.deployment.yml"
-          TARGET: "${{ inputs.environment }}/docker-compose.yml"
+          SOURCE: "compose.deployment.yml"
+          TARGET: "${{ inputs.environment }}/compose.yml"
 
       - name: Deploy changes
         id: deploy

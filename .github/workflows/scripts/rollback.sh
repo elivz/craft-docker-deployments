@@ -32,9 +32,9 @@ else
         PREVIOUS_IMAGE=$(cat .last-stable-image)
         echo "📦 Rolling back to previous image: $PREVIOUS_IMAGE"
         
-        # Update docker-compose.yml with previous image
+        # Update compose.yml with previous image
         # Use # as delimiter since image names contain / and :
-        sed -i "s#image: .*#image: $PREVIOUS_IMAGE#g" docker-compose.yml
+        sed -i "s#image: .*#image: $PREVIOUS_IMAGE#g" compose.yml
         
         # Restart with previous image
         docker compose down web queue --timeout 30

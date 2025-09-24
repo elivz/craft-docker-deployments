@@ -37,10 +37,10 @@ echo "$GITHUB_TOKEN" | docker login --username "$GITHUB_ACTOR" --password-stdin 
 
 # Configure docker-compose file with environment-specific values
 echo "⚙️ Configuring docker-compose file..."
-sed -i -e "s|{BRANCH}|$ENVIRONMENT|g" docker-compose.yml
-sed -i -e "s|{VIRTUAL_HOST}|$DOMAIN|g" docker-compose.yml
-sed -i -e "s|{GHCR_REGISTRY}|$GHCR_REGISTRY|g" docker-compose.yml
-sed -i -e "s|{GHCR_REPOSITORY}|$GHCR_REPOSITORY|g" docker-compose.yml
+sed -i -e "s|{BRANCH}|$ENVIRONMENT|g" compose.yml
+sed -i -e "s|{VIRTUAL_HOST}|$DOMAIN|g" compose.yml
+sed -i -e "s|{GHCR_REGISTRY}|$GHCR_REGISTRY|g" compose.yml
+sed -i -e "s|{GHCR_REPOSITORY}|$GHCR_REPOSITORY|g" compose.yml
 
 # Save current stable image before deployment (for rollback purposes)
 if docker compose ps web >/dev/null 2>&1; then
